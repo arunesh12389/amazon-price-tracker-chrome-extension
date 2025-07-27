@@ -3,8 +3,8 @@ services:
     name: price-tracker-backend
     dockerfilePath: Dockerfile
     plan: free
+    python:
+      version: "3.11.8"  
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.0
       - key: PIP_NO_CACHE_DIR
         value: "1"
