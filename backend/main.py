@@ -10,13 +10,15 @@ from scraper.flipkart_scraper import FlipkartScraper
 from predictor.predict import PricePredictor
 from database.db import Database
 from alerts.notifier import Notifier
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import asyncio
 
 app = FastAPI(title="Smart Price Tracker API")
 
 # Enable CORS for Chrome Extension
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["chrome-extension://*"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -42,6 +44,7 @@ class TrackRequest(BaseModel):
     name: str
     price: float
     threshold: float
+    user_id: str = "default"  # Add user identification
     last_checked: Optional[str] = None
 
 class TrackingResponse(BaseModel):
@@ -49,6 +52,17 @@ class TrackingResponse(BaseModel):
     product_id: str
     prediction: Optional[PricePrediction] = None
     current_price: Optional[float] = None
+    data_points_needed: int = 0  # Add data collection info
+    next_update: Optional[str] = None
+
+class UpdateThresholdRequest(BaseModel):
+    url: str
+    new_threshold: float
+    user_id: str = "default"
+
+class ProductActionRequest(BaseModel):
+    url: str
+    user_id: str = "default"
 
 @app.get("/")
 def root():
@@ -72,56 +86,255 @@ async def get_current_price(url: str):
 @app.post("/api/track", response_model=TrackingResponse)
 async def track_product(request: TrackRequest):
     try:
-        # Store product and get current price
+        # Debug received data
+        print(f"Tracking product: {request.name} at ₹{request.price} for user: {request.user_id}")
+        
+        # Validate price
+        if not isinstance(request.price, (int, float)) or request.price <= 0:
+            raise HTTPException(status_code=422, detail="Invalid price value")
+        
+        # Store in database
         product_id = await db.add_tracked_product(
             url=request.url,
             name=request.name,
             threshold=request.threshold,
-            current_price=request.price
+            current_price=request.price,
+            user_id=request.user_id
         )
         
-        # Add initial price to history
-        await db.update_price(request.url, request.price)
+        # Add to price history
+        await db.update_price(request.url, request.price, request.user_id)
         
-        # Get history and generate prediction
-        history = await db.get_price_history(request.url)
-        prediction = predictor.predict_prices(history)
+        # Generate prediction
+        history = await db.get_price_history(request.url, request.user_id)
+        if not history:
+            history = [{"date": datetime.utcnow(), "price": request.price}]
         
-        # Check for price alerts
-        if request.price <= request.threshold:
-            await notifier.send_alert(
-                product_id=product_id,
-                product_name=request.name,
-                current_price=request.price,
-                threshold=request.threshold
-            )
+        prediction = None
+        data_points_needed = 0
+        next_update = None
+        
+        try:
+            if len(history) >= 5:
+                prediction = predictor.predict_prices(history)
+            else:
+                data_points_needed = 5 - len(history)
+                next_update = (datetime.utcnow() + timedelta(minutes=30)).isoformat()  # Changed from hours=1 to minutes=30
+        except Exception as pred_e:
+            print(f"Prediction error: {pred_e}")
+            prediction = None
         
         return {
             "status": "success",
             "product_id": str(product_id),
             "prediction": prediction,
-            "current_price": request.price
+            "current_price": request.price,
+            "data_points_needed": data_points_needed,
+            "next_update": next_update
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        print(f"Tracking error: {str(e)}")  # Detailed error logging
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Tracking failed: {str(e)}"
+        )
+    
 
 @app.get("/api/history")
-async def get_price_history(url: str) -> List[PriceHistory]:
+async def get_price_history(url: str, user_id: str = "default") -> List[PriceHistory]:
     try:
-        history = await db.get_price_history(url)
+        history = await db.get_price_history(url, user_id)
         return history
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/history-prediction")
+async def get_history_and_prediction(url: str, user_id: str = "default"):
+    try:
+        history = await db.get_price_history(url, user_id)
+        prediction = None
+        if history and len(history) >= 5:
+            try:
+                prediction = predictor.predict_prices(history)
+            except Exception as pred_e:
+                import traceback
+                print("Prediction error:", str(pred_e))
+                traceback.print_exc()
+                prediction = None
+        return {
+            "history": history,
+            "prediction": prediction,
+            "data_points": len(history),
+            "min_required": 5
+        }
+    except Exception as e:
+        import traceback
+        print(f"History+Prediction error: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to fetch history and prediction: {str(e)}")
+
+@app.get("/ping")
+async def ping():
+    return {"status": "alive", "timestamp": datetime.utcnow()}
+
+
 @app.get("/api/predict")
+
 async def predict_price(url: str) -> PricePrediction:
     try:
-        history = await db.get_price_history(url)
-        prediction = predictor.predict_prices(history)
-        return prediction
+        # After update_price
+        history = await db.get_price_history(request.url)
+        if not history or len(history) < 5:
+            return {
+                "status": "success",
+                "product_id": str(product_id),
+                "prediction": None,
+                "current_price": request.price
+            }
+            
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/user/products")
+async def get_user_products(user_id: str = "default"):
+    """Get all tracked products for a specific user."""
+    try:
+        products = await db.get_user_tracked_products(user_id)
+        return {
+            "user_id": user_id,
+            "products": products,
+            "total_products": len(products)
+        }
+    except Exception as e:
+        print(f"Error getting user products: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/user/products/{user_id}")
+async def get_user_products_by_id(user_id: str):
+    """Get all tracked products for a specific user by ID."""
+    try:
+        products = await db.get_user_tracked_products(user_id)
+        return {
+            "user_id": user_id,
+            "products": products,
+            "total_products": len(products)
+        }
+    except Exception as e:
+        print(f"Error getting user products by ID: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/product/threshold")
+async def update_product_threshold(request: UpdateThresholdRequest):
+    """Update the threshold for a tracked product."""
+    try:
+        success = await db.update_product_threshold(
+            request.url, 
+            request.new_threshold, 
+            request.user_id
+        )
+        
+        if success:
+            return {
+                "status": "success",
+                "message": f"Threshold updated to ₹{request.new_threshold}",
+                "new_threshold": request.new_threshold
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Product not found")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/product/stop-tracking")
+async def stop_tracking_product(request: ProductActionRequest):
+    """Stop tracking a product (set to inactive)."""
+    try:
+        success = await db.stop_tracking_product(request.url, request.user_id)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": "Product tracking stopped successfully"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Product not found")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/product/remove")
+async def remove_product_completely(request: ProductActionRequest):
+    """Completely remove a product and all its data."""
+    try:
+        success = await db.remove_product_completely(request.url, request.user_id)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": "Product and all data removed successfully"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Product not found")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def scheduled_price_update():
+    print("[Scheduler] Running scheduled price update...")
+    try:
+        # Get all products for all users
+        products = await db.get_products_to_check()
+        
+        # Group by user for better organization
+        user_products = {}
+        for product in products:
+            user_id = product.get('user_id', 'default')
+            if user_id not in user_products:
+                user_products[user_id] = []
+            user_products[user_id].append(product)
+        
+        print(f"[Scheduler] Processing {len(products)} products for {len(user_products)} users")
+        
+        for user_id, user_products_list in user_products.items():
+            print(f"[Scheduler] Processing user: {user_id} ({len(user_products_list)} products)")
+            
+            for product in user_products_list:
+                url = product.get('url')
+                if not url:
+                    continue
+                    
+                try:
+                    if 'amazon' in url:
+                        scraper = AmazonScraper()
+                    elif 'flipkart' in url:
+                        scraper = FlipkartScraper()
+                    else:
+                        print(f"[Scheduler] Unsupported site for url: {url}")
+                        continue
+                        
+                    price = await scraper.get_price(url)
+                    await db.update_price(url, price, user_id)
+                    
+                    # Check if price dropped below threshold
+                    threshold = product.get('threshold', 0)
+                    if price <= threshold:
+                        await db.add_alert(url, price, threshold, user_id)
+                        print(f"[Scheduler] 🚨 Price alert for {url}: ₹{price} <= ₹{threshold}")
+                    
+                    print(f"[Scheduler] Updated price for {url}: ₹{price}")
+                    
+                except Exception as e:
+                    print(f"[Scheduler] Error updating {url}: {e}")
+                    
+    except Exception as e:
+        print(f"[Scheduler] General error: {e}")
+
 if __name__ == "__main__":
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(scheduled_price_update, 'interval', minutes=30)  # Changed from hours=1 to minutes=30
+    scheduler.start()
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
