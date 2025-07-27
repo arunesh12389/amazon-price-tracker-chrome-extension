@@ -56,9 +56,11 @@ const ProductTracker = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          url: product.url,
-          threshold: thresholdPrice,
-        }),
+        url: product.url,
+        name: product.name,
+        price: product.currentPrice,
+        threshold: thresholdPrice
+      }),
       });
 
       if (!response.ok) throw new Error('Failed to track price');

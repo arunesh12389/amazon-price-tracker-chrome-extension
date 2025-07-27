@@ -1,3 +1,23 @@
+// Helper function to make API calls through background script
+async function makeApiCall(endpoint, method = 'GET', body = null) {
+    return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({
+            type: 'API_CALL',
+            endpoint: endpoint,
+            method: method,
+            body: body
+        }, (response) => {
+            if (chrome.runtime.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+            } else if (response.error) {
+                reject(new Error(response.error));
+            } else {
+                resolve(response.data);
+            }
+        });
+    });
+}
+
 document.getElementById('trackBtn').onclick = async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -39,23 +59,20 @@ document.getElementById('trackBtn').onclick = async () => {
       last_checked: new Date().toISOString()
     };
 
-    // Send to backend
-    const backendResponse = await fetch('http://localhost:8000/api/track', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    if (!backendResponse.ok) {
-      throw new Error(`HTTP error! status: ${backendResponse.status}`);
-    }
-
-    const result = await backendResponse.json();
+    // Send to backend using background script
+    const result = await makeApiCall('/api/track', 'POST', payload);
     
     // Show success and render graph
-    showTrackingStatus(`Tracking: ${product.name}`, true);
-    if (result.prediction) {
-      renderPredictionGraph(result.prediction);
+    const threshold = parseFloat(document.getElementById('priceThreshold')?.value || 1000);
+    
+    if (result.data_points_needed > 0) {
+      showTrackingStatus(`✅ Tracking started! We're still collecting past price data to make a prediction. ${result.data_points_needed} more prices are needed. We'll check again in 30 minutes.`, true);
+      showDataCollectionProgress(result.data_points_needed);
+    } else {
+      showTrackingStatus(`✅ Success! You will be notified when the price drops below ₹${threshold}`, true);
+      if (result.prediction) {
+        renderPredictionGraph(result.prediction);
+      }
     }
 
   } catch (error) {
@@ -127,7 +144,71 @@ function showTrackingStatus(message, isSuccess) {
   
   setTimeout(() => {
     statusDiv.style.display = 'none';
-  }, 3000);
+  }, 5000); // Increased timeout for better readability
+}
+
+function showDataCollectionProgress(dataPointsNeeded) {
+  const progressContainer = document.getElementById('dataProgressContainer');
+  if (!progressContainer) {
+    // Create progress container if it doesn't exist
+    const container = document.createElement('div');
+    container.id = 'dataProgressContainer';
+    container.style.cssText = `
+      margin-top: 15px;
+      padding: 10px;
+      background-color: #f0f8ff;
+      border-radius: 5px;
+      border-left: 4px solid #2196F3;
+    `;
+    
+    const progressText = document.createElement('p');
+    progressText.style.margin = '0 0 10px 0';
+    progressText.textContent = `📊 Data Collection Progress`;
+    
+    const progressBar = document.createElement('div');
+    progressBar.style.cssText = `
+      width: 100%;
+      height: 20px;
+      background-color: #e0e0e0;
+      border-radius: 10px;
+      overflow: hidden;
+    `;
+    
+    const progressFill = document.createElement('div');
+    const progressPercent = ((5 - dataPointsNeeded) / 5) * 100;
+    progressFill.style.cssText = `
+      width: ${progressPercent}%;
+      height: 100%;
+      background-color: #2196F3;
+      transition: width 0.3s ease;
+    `;
+    
+    const progressLabel = document.createElement('div');
+    progressLabel.style.cssText = `
+      text-align: center;
+      margin-top: 5px;
+      font-size: 12px;
+      color: #666;
+    `;
+    progressLabel.textContent = `${5 - dataPointsNeeded}/5 data points collected`;
+    
+    progressBar.appendChild(progressFill);
+    container.appendChild(progressText);
+    container.appendChild(progressBar);
+    container.appendChild(progressLabel);
+    
+    // Insert after status message
+    const statusDiv = document.getElementById('statusMessage');
+    statusDiv.parentNode.insertBefore(container, statusDiv.nextSibling);
+  } else {
+    // Update existing progress
+    const progressFill = progressContainer.querySelector('div > div');
+    const progressLabel = progressContainer.querySelector('div:last-child');
+    const progressPercent = ((5 - dataPointsNeeded) / 5) * 100;
+    
+    progressFill.style.width = `${progressPercent}%`;
+    progressLabel.textContent = `${5 - dataPointsNeeded}/5 data points collected`;
+  }
 }
 
 
@@ -142,6 +223,32 @@ async function injectContentScript(tabId) {
     console.error("Injection failed:", err);
   }
 }
+
+// Listen for product info sent by content script and auto-fill fields
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'PRODUCT_FOUND' && message.data) {
+    document.getElementById('productName').textContent = message.data.name;
+    document.getElementById('productPrice').textContent = message.data.currentPrice;
+    // Optionally, set the threshold input to a default value based on price
+    if (message.data.currentPrice && !isNaN(Number(message.data.currentPrice))) {
+      document.getElementById('priceThreshold').value = Math.round(Number(message.data.currentPrice) * 0.9);
+    }
+  }
+});
+
+// On popup load, request product info if not already filled
+window.addEventListener('DOMContentLoaded', async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  chrome.tabs.sendMessage(tab.id, { type: 'GET_PRODUCT_INFO' }, (response) => {
+    if (response && response.name && response.currentPrice) {
+      document.getElementById('productName').textContent = response.name;
+      document.getElementById('productPrice').textContent = response.currentPrice;
+      if (response.currentPrice && !isNaN(Number(response.currentPrice))) {
+        document.getElementById('priceThreshold').value = Math.round(Number(response.currentPrice) * 0.9);
+      }
+    }
+  });
+});
 
 // Call this when popup opens
 chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {

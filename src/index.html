@@ -39,6 +39,8 @@
     </style>
     <!-- Add Chart.js library -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+
   </head>
   <body>
     <h3>Product Info</h3>
@@ -56,6 +58,22 @@
     
     <button id="trackBtn">Track This Product</button>
     
+    <!-- Add dashboard link -->
+    <div style="margin-top: 15px; text-align: center;">
+        <a href="dashboard.html" target="_blank" style="
+            display: inline-block;
+            padding: 8px 16px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        " onmouseover="this.style.background='#5a6fd8'" onmouseout="this.style.background='#667eea'">
+            📊 View Dashboard
+        </a>
+    </div>
+    
     <!-- Status message container -->
     <div id="statusMessage"></div>
     
@@ -68,6 +86,8 @@
         (<span id="confText"></span>% confidence)
       </div>
     </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <script src="popup.js" defer></script>
   </body>

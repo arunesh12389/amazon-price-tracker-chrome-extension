@@ -32,25 +32,27 @@ ChartJS.register(
 
 const PriceHistory = () => {
   const [priceHistory, setPriceHistory] = useState([]);
+  const [prediction, setPrediction] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [stats, setStats] = useState(null);
 
   useEffect(() => {
-    const fetchPriceHistory = async () => {
+    const fetchHistoryAndPrediction = async () => {
       try {
         const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!tabs[0].url) throw new Error('No URL found');
 
         const response = await fetch(
-          `http://localhost:8000/api/history?url=${encodeURIComponent(tabs[0].url)}`
+          `http://localhost:8000/api/history-prediction?url=${encodeURIComponent(tabs[0].url)}`
         );
-        if (!response.ok) throw new Error('Failed to fetch price history');
+        if (!response.ok) throw new Error('Failed to fetch price history and prediction');
 
         const data = await response.json();
-        setPriceHistory(data.history);
+        setPriceHistory(data.history || []);
+        setPrediction(data.prediction || null);
 
-        if (data.history.length > 0) {
+        if (data.history && data.history.length > 0) {
           const prices = data.history.map((point) => point.price);
           const minPrice = Math.min(...prices);
           const maxPrice = Math.max(...prices);
@@ -66,7 +68,7 @@ const PriceHistory = () => {
       }
     };
 
-    fetchPriceHistory();
+    fetchHistoryAndPrediction();
   }, []);
 
   if (loading) {
@@ -111,13 +113,18 @@ const PriceHistory = () => {
     );
   }
 
+  // Show collecting message if not enough history for prediction
+  const notEnoughForPrediction = priceHistory.length > 0 && (!prediction || !prediction.dates || prediction.dates.length === 0);
+
+  const chartLabels = priceHistory.map((point) =>
+    new Date(point.date).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    })
+  );
+
   const chartData = {
-    labels: priceHistory.map((point) =>
-      new Date(point.date).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-      })
-    ),
+    labels: chartLabels,
     datasets: [
       {
         label: 'Price History',
@@ -130,6 +137,27 @@ const PriceHistory = () => {
       },
     ],
   };
+
+  // Add prediction to chart if available
+  if (prediction && prediction.dates && prediction.prices) {
+    chartData.labels = [
+      ...chartLabels,
+      ...prediction.dates.filter((d) => !chartLabels.includes(d)),
+    ];
+    chartData.datasets.push({
+      label: 'Prediction',
+      data: [
+        ...Array(priceHistory.length).fill(null),
+        ...prediction.prices,
+      ],
+      borderColor: 'rgb(255, 99, 132)',
+      backgroundColor: 'rgba(255, 99, 132, 0.3)',
+      borderDash: [8, 4],
+      tension: 0.4,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+    });
+  }
 
   const chartOptions = {
     responsive: true,
@@ -178,8 +206,18 @@ const PriceHistory = () => {
     >
       <CardContent>
         <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-          Price History
+          Price History {prediction && prediction.recommendation && (
+            <span style={{ fontWeight: 400, fontSize: 14, color: prediction.recommendation === 'buy' ? 'green' : 'orange', marginLeft: 8 }}>
+              ({prediction.recommendation === 'buy' ? 'Buy' : 'Wait'} suggested)
+            </span>
+          )}
         </Typography>
+
+        {notEnoughForPrediction && (
+          <Alert severity="info" sx={{ mb: 2, borderRadius: 2, boxShadow: 2 }}>
+            Collecting price data, please check back later for predictions.
+          </Alert>
+        )}
 
         {stats && (
           <Box sx={{ mb: 2 }}>
@@ -199,8 +237,48 @@ const PriceHistory = () => {
         )}
 
         <Box sx={{ height: 300, mt: 2 }}>
-          <Line data={chartData} options={chartOptions} />
+          <Line data={chartData} options={{
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                position: 'top',
+                labels: {
+                  boxWidth: 10,
+                  usePointStyle: true,
+                },
+              },
+              tooltip: {
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                padding: 12,
+                titleFont: { size: 14 },
+                bodyFont: { size: 13 },
+                callbacks: {
+                  label: (context) => `Price: $${context.parsed.y?.toFixed(2)}`,
+                },
+              },
+            },
+            scales: {
+              y: {
+                beginAtZero: false,
+                ticks: {
+                  callback: (value) => `$${value.toFixed(2)}`,
+                },
+              },
+            },
+          }} />
         </Box>
+
+        {prediction && (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              <b>Prediction:</b> {prediction.recommendation ? (prediction.recommendation === 'buy' ? 'Buy' : 'Wait') : 'N/A'}
+              {typeof prediction.confidence === 'number' && (
+                <> (Confidence: {(prediction.confidence * 100).toFixed(1)}%)</>
+              )}
+            </Typography>
+          </Box>
+        )}
       </CardContent>
     </Card>
   );

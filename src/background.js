@@ -79,3 +79,78 @@ async function checkPrice(url, threshold) {
   }
 }
 
+// Background script for Price Tracker Extension
+
+console.log('Background script loaded');
+
+// Handle messages from content scripts and popup
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    console.log('Background received message:', request);
+    
+    if (request.type === 'API_CALL') {
+        handleApiCall(request, sendResponse);
+        return true; // Keep the message channel open for async response
+    }
+    
+    // Handle other message types here
+    sendResponse({ success: true });
+});
+
+// Handle API calls to the backend
+async function handleApiCall(request, sendResponse) {
+    try {
+        const { endpoint, method = 'GET', body = null } = request;
+        const url = `http://localhost:8000${endpoint}`;
+        
+        console.log(`Making API call: ${method} ${url}`, body);
+        
+        const options = {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        };
+        
+        if (body) {
+            options.body = JSON.stringify(body);
+        }
+        
+        const response = await fetch(url, options);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('API call failed:', response.status, errorText);
+            sendResponse({
+                error: `HTTP ${response.status}: ${errorText}`
+            });
+            return;
+        }
+        
+        const data = await response.json();
+        console.log('API call successful:', data);
+        
+        sendResponse({
+            data: data
+        });
+        
+    } catch (error) {
+        console.error('API call error:', error);
+        sendResponse({
+            error: error.message
+        });
+    }
+}
+
+// Extension installation handler
+chrome.runtime.onInstalled.addListener(() => {
+    console.log('Price Tracker Extension installed');
+});
+
+// Extension startup handler
+chrome.runtime.onStartup.addListener(() => {
+    console.log('Price Tracker Extension started');
+});
+
+// Test the background script is working
+console.log('Background script initialization complete');
+

@@ -33,5 +33,14 @@
     "scripting",
     "notifications"
   ],
-  "host_permissions": ["http://localhost:8000/"]
+  "host_permissions": [
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["dashboard.html", "dashboard.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

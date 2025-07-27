@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Extension Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .btn {
+            padding: 10px 15px;
+            margin: 5px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+        }
+        .btn:hover {
+            background: #0056b3;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Extension Test Page</h1>
+    
+    <div class="test-section">
+        <h3>Test API Connection</h3>
+        <button class="btn" id="testApiBtn">Test API</button>
+        <div id="apiResult" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>Test Product Loading</h3>
+        <button class="btn" id="loadProductsBtn">Load Products</button>
+        <div id="productsResult" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>Navigation</h3>
+        <a href="index.html" class="btn">Go to Popup</a>
+        <a href="dashboard.html" class="btn">Go to Dashboard</a>
+    </div>
+
+    <script>
+        // Test API connection
+        document.getElementById('testApiBtn').addEventListener('click', async () => {
+            const resultDiv = document.getElementById('apiResult');
+            resultDiv.textContent = 'Testing...';
+            
+            try {
+                const response = await new Promise((resolve, reject) => {
+                    chrome.runtime.sendMessage({
+                        type: 'API_CALL',
+                        endpoint: '/ping',
+                        method: 'GET'
+                    }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            reject(new Error(chrome.runtime.lastError.message));
+                        } else if (response && response.error) {
+                            reject(new Error(response.error));
+                        } else {
+                            resolve(response.data);
+                        }
+                    });
+                });
+                
+                resultDiv.textContent = '✅ Success: ' + JSON.stringify(response);
+            } catch (error) {
+                resultDiv.textContent = '❌ Error: ' + error.message;
+            }
+        });
+        
+        // Test product loading
+        document.getElementById('loadProductsBtn').addEventListener('click', async () => {
+            const resultDiv = document.getElementById('productsResult');
+            resultDiv.textContent = 'Loading...';
+            
+            try {
+                const response = await new Promise((resolve, reject) => {
+                    chrome.runtime.sendMessage({
+                        type: 'API_CALL',
+                        endpoint: '/api/user/products',
+                        method: 'GET'
+                    }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            reject(new Error(chrome.runtime.lastError.message));
+                        } else if (response && response.error) {
+                            reject(new Error(response.error));
+                        } else {
+                            resolve(response.data);
+                        }
+                    });
+                });
+                
+                resultDiv.textContent = '✅ Success: ' + JSON.stringify(response);
+            } catch (error) {
+                resultDiv.textContent = '❌ Error: ' + error.message;
+            }
+        });
+        
+        console.log('Test page loaded');
+    </script>
+</body>
+</html> 
