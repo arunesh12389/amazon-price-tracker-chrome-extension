@@ -4,7 +4,11 @@ services:
     dockerfilePath: Dockerfile
     plan: free
     python:
-      version: "3.11.8"  
+      version: "3.11.8"  # Explicit version lock
+    buildCommand: |
+      python3.11 -m pip install --upgrade pip wheel setuptools &&
+      python3.11 -m pip install -r backend/requirements.txt &&
+      python3.11 -m playwright install
     envVars:
       - key: PIP_NO_CACHE_DIR
         value: "1"

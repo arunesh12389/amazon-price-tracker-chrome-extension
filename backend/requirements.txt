@@ -4,7 +4,7 @@ motor==3.3.1
 python-dotenv==1.0.0
 beautifulsoup4==4.12.2
 playwright==1.38.0
-pandas==2.0.3
+pandas==1.5.3  
 numpy==1.24.4
 twilio==8.8.0
 pydantic==1.10.12
@@ -13,4 +13,4 @@ starlette==0.27.0
 typing-extensions==4.7.1
 apscheduler==3.10.4
 greenlet==2.0.2
-setuptools==68.2.2 
+setuptools==68.2.2  
