@@ -1,14 +1,16 @@
 services:
   - type: web
     name: price-tracker-backend
-    dockerfilePath: Dockerfile
     plan: free
-    python:
-      version: "3.11.8"  # Explicit version lock
     buildCommand: |
-      python3.11 -m pip install --upgrade pip wheel setuptools &&
-      python3.11 -m pip install -r backend/requirements.txt &&
-      python3.11 -m playwright install
+      python3.11 -m venv venv &&
+      . venv/bin/activate &&
+      pip install --upgrade pip wheel setuptools==68.2.2 &&
+      pip install -r backend/requirements.txt &&
+      playwright install
+    startCommand: |
+      . venv/bin/activate &&
+      uvicorn backend.main:app --host 0.0.0.0 --port 10000
     envVars:
       - key: PIP_NO_CACHE_DIR
         value: "1"
