@@ -3,43 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <title>Price Tracker</title>
-    <style>
-      body { 
-        font-family: sans-serif; 
-        padding: 10px;
-        width: 350px; /* Fixed width for popup */
-      }
-      #statusMessage {
-        display: none;
-        padding: 8px;
-        margin: 10px 0;
-        border-radius: 4px;
-      }
-      #graphContainer {
-        display: none;
-        margin-top: 15px;
-        padding: 10px;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-      }
-      .recommendation {
-        margin-top: 10px;
-        padding: 8px;
-        background-color: #f8f8f8;
-        border-radius: 4px;
-        text-align: center;
-        font-size: 14px;
-      }
-      #priceThreshold {
-        width: 100%;
-        padding: 8px;
-        margin: 10px 0;
-        box-sizing: border-box;
-      }
-    </style>
-    <!-- Add Chart.js library -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <link rel="stylesheet" href="/src/styles.css">
+
 
   </head>
   <body>
@@ -59,24 +24,16 @@
     <button id="trackBtn">Track This Product</button>
     
     <!-- Add dashboard link -->
-    <div style="margin-top: 15px; text-align: center;">
-        <a href="dashboard.html" target="_blank" style="
-            display: inline-block;
-            padding: 8px 16px;
-            background: #667eea;
-            color: white;
-            text-decoration: none;
-            border-radius: 5px;
-            font-size: 14px;
-            transition: background-color 0.2s;
-        " onmouseover="this.style.background='#5a6fd8'" onmouseout="this.style.background='#667eea'">
+    <div class="dashboard-link-container">
+        <a href="dashboard.html" target="_blank" id="dashboardLink">
             📊 View Dashboard
         </a>
     </div>
     
     <!-- Status message container -->
     <div id="statusMessage"></div>
-    
+
+
     <!-- Graph visualization container -->
     <div id="graphContainer">
       <canvas id="graphCanvas"></canvas>
@@ -86,9 +43,8 @@
         (<span id="confText"></span>% confidence)
       </div>
     </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
-    <script src="popup.js" defer></script>
+    <!-- Use absolute paths with chrome-extension:// protocol -->
+    <script src="/src/lib/chart.min.js" id="chartjs-script"></script>
+    <script src="/src/popup.js"></script>
   </body>
 </html>

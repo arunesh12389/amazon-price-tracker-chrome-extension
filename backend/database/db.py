@@ -194,3 +194,9 @@ class Database:
         alert_result = await self.alerts.delete_many({'url': url, 'user_id': user_id})
         
         return product_result.deleted_count > 0
+
+    async def get_user_alerts(self, user_id: str = "default") -> List[Dict]:
+        """Get alerts for a user sorted by newest first."""
+        cursor = self.alerts.find({ 'user_id': user_id }).sort('timestamp', -1)
+        alerts = await cursor.to_list(length=None)
+        return self._serialize_documents(alerts)

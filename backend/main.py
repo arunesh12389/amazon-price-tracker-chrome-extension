@@ -64,6 +64,12 @@ class ProductActionRequest(BaseModel):
     url: str
     user_id: str = "default"
 
+class AddPricePointRequest(BaseModel):
+    url: str
+    price: float
+    user_id: str = "default"
+    timestamp: Optional[str] = None
+
 @app.get("/")
 def root():
     return {"message": "FastAPI is working!"}
@@ -181,21 +187,36 @@ async def ping():
     return {"status": "alive", "timestamp": datetime.utcnow()}
 
 
-@app.get("/api/predict")
+@app.post("/api/predict")
+async def predict_price(body: Dict) -> Dict:
+    """Return prediction given a product URL. Matches extension POST call.
 
-async def predict_price(url: str) -> PricePrediction:
+    body: { url: str }
+    """
     try:
-        # After update_price
-        history = await db.get_price_history(request.url)
-        if not history or len(history) < 5:
-            return {
-                "status": "success",
-                "product_id": str(product_id),
-                "prediction": None,
-                "current_price": request.price
-            }
-            
+        url = body.get('url')
+        if not url:
+            raise HTTPException(status_code=422, detail="Missing url")
 
+        history = await db.get_price_history(url)
+        if not history or len(history) < 5:
+            # Not enough data – return placeholder so UI can show progress
+            return {
+                "history": history,
+                "prediction": None,
+                "data_points": len(history),
+                "min_required": 5
+            }
+
+        prediction = predictor.predict_prices(history)
+        return {
+            "history": history,
+            "prediction": prediction,
+            "data_points": len(history),
+            "min_required": 5
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -246,6 +267,9 @@ async def update_product_threshold(request: UpdateThresholdRequest):
         else:
             raise HTTPException(status_code=404, detail="Product not found")
             
+    except HTTPException as e:
+        # Preserve explicit HTTP errors like 404
+        raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -263,6 +287,8 @@ async def stop_tracking_product(request: ProductActionRequest):
         else:
             raise HTTPException(status_code=404, detail="Product not found")
             
+    except HTTPException as e:
+        raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -280,8 +306,44 @@ async def remove_product_completely(request: ProductActionRequest):
         else:
             raise HTTPException(status_code=404, detail="Product not found")
             
+    except HTTPException as e:
+        raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/alerts")
+async def get_alerts(user_id: str = "default"):
+    """Return all recorded alerts for the user (latest first)."""
+    try:
+        alerts = await db.get_user_alerts(user_id)
+        return { "user_id": user_id, "alerts": alerts, "total_alerts": len(alerts) }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/add_price_point")
+async def add_price_point(request: AddPricePointRequest):
+    """Add a new price point to a product's history."""
+    try:
+        # Optionally use provided timestamp, else use now
+        if request.timestamp:
+            from datetime import datetime
+            ts = datetime.fromisoformat(request.timestamp)
+        else:
+            ts = None
+        # Patch db.update_price to accept timestamp if needed, else just use now
+        # For now, we use the existing db.update_price which uses now
+        await db.update_price(request.url, request.price, request.user_id)
+        return {
+            "status": "success",
+            "message": f"Added price point ₹{request.price} for {request.url}",
+            "url": request.url,
+            "price": request.price
+        }
+    except Exception as e:
+        import traceback
+        print(f"Add price point error: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to add price point: {str(e)}")
 
 async def scheduled_price_update():
     print("[Scheduler] Running scheduled price update...")

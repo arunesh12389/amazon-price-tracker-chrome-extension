@@ -38,6 +38,9 @@
             opacity: 0.9;
         }
         
+        .tabs { display:flex; gap:10px; border-bottom:1px solid #eee; padding:0 30px 10px; }
+        .tab { cursor:pointer; padding:8px 12px; border-radius:6px; display:inline-flex; align-items:center; gap:6px; color:#555; }
+        .tab.active { background:#eef2ff; color:#334155; font-weight:600; }
         .content {
             padding: 30px;
         }
@@ -310,6 +313,10 @@
             <p>Manage your tracked products and monitor price changes</p>
         </div>
         
+        <div class="tabs">
+            <div id="tabHome" class="tab active">🏠 Home</div>
+            <div id="tabAlerts" class="tab">🔔 Alerts</div>
+        </div>
         <div class="content">
             <div class="stats-grid">
                 <div class="stat-card">
@@ -336,7 +343,7 @@
                 </button>
             </div>
             
-            <div class="products-section">
+            <div class="products-section" id="homeSection">
                 <h2 class="section-title">📦 Your Tracked Products</h2>
                 <div id="productsContainer">
                     <div class="loading">
@@ -344,6 +351,11 @@
                         Loading your products...
                     </div>
                 </div>
+            </div>
+
+            <div class="products-section" id="alertsSection" style="display:none;">
+                <h2 class="section-title">🔔 Alerts</h2>
+                <div id="alertsContainer" class="product-grid"></div>
             </div>
         </div>
     </div>
@@ -371,7 +383,10 @@
             </div>
         </div>
     </div>
-    
+
+    <script src="lib/chart.js"></script>
+
     <script src="dashboard.js"></script>
+
 </body>
 </html> 

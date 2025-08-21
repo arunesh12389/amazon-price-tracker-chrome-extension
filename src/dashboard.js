@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('Dashboard initialized');
     setupEventListeners();
     loadUserProducts();
+    loadAlerts();
 });
 
 // Setup all event listeners
@@ -45,6 +46,27 @@ function setupEventListeners() {
     });
     
     console.log('Event listeners setup complete');
+
+    // Tabs wiring
+    const tabHome = document.getElementById('tabHome');
+    const tabAlerts = document.getElementById('tabAlerts');
+    const homeSection = document.getElementById('homeSection');
+    const alertsSection = document.getElementById('alertsSection');
+    if (tabHome && tabAlerts && homeSection && alertsSection) {
+        tabHome.addEventListener('click', () => {
+            tabHome.classList.add('active');
+            tabAlerts.classList.remove('active');
+            homeSection.style.display = 'block';
+            alertsSection.style.display = 'none';
+        });
+        tabAlerts.addEventListener('click', () => {
+            tabAlerts.classList.add('active');
+            tabHome.classList.remove('active');
+            homeSection.style.display = 'none';
+            alertsSection.style.display = 'block';
+            loadAlerts();
+        });
+    }
 }
 
 // Helper function to make API calls through background script
@@ -88,17 +110,75 @@ async function testApiConnection() {
     }
 }
 
+// Show warning message
+function showWarning(message) {
+    const statusDiv = document.getElementById('statusMessage');
+    statusDiv.textContent = message;
+    statusDiv.style.color = '#ff9800'; // Orange color for warnings
+    statusDiv.style.display = 'block';
+    setTimeout(() => {
+        statusDiv.style.display = 'none';
+    }, 5000);
+}
+
 // Load user's tracked products
 async function loadUserProducts() {
     try {
         console.log('Loading user products...');
-        const data = await makeApiCall('/api/user/products');
-        console.log('Received data:', data);
         
-        currentProducts = data.products || [];
-        
-        updateStats(data);
-        renderProducts(currentProducts);
+        // First, try to get products from local storage
+        chrome.storage.local.get(['trackedProducts'], async (result) => {
+            const localProducts = result.trackedProducts || {};
+            console.log('Products from local storage:', localProducts);
+            
+            // Convert object to array
+            const localProductsArray = Object.values(localProducts).map(product => ({
+                name: product.name,
+                url: product.url,
+                current_price: product.price,
+                threshold: product.threshold,
+                is_active: true,
+                last_checked: product.lastChecked,
+                date_added: product.dateAdded || Date.now()
+            }));
+            
+            // Try to get products from API as well
+            try {
+                const data = await makeApiCall('/api/user/products');
+                console.log('Received data from API:', data);
+                
+                // Merge products from API with local storage products
+                const apiProducts = data.products || [];
+                
+                // Use a Map to deduplicate by URL
+                const productMap = new Map();
+                
+                // Add local products first
+                localProductsArray.forEach(product => {
+                    productMap.set(product.url, product);
+                });
+                
+                // Then add/override with API products
+                apiProducts.forEach(product => {
+                    productMap.set(product.url, product);
+                });
+                
+                // Convert back to array
+                currentProducts = Array.from(productMap.values());
+                
+                updateStats({ total_products: currentProducts.length });
+                renderProducts(currentProducts);
+                
+            } catch (error) {
+                console.error('Error loading products from API:', error);
+                showWarning('Could not connect to server. Showing locally tracked products only.');
+                
+                // If API fails, just use local products
+                currentProducts = localProductsArray;
+                updateStats({ total_products: currentProducts.length });
+                renderProducts(currentProducts);
+            }
+        });
         
     } catch (error) {
         console.error('Error loading products:', error);
@@ -126,7 +206,7 @@ function updateStats(data) {
     
     document.getElementById('totalProducts').textContent = totalProducts;
     document.getElementById('activeProducts').textContent = activeProducts;
-    document.getElementById('priceAlerts').textContent = '0'; // TODO: Implement alert counting
+    document.getElementById('priceAlerts').textContent = String((window.__alertsCache || []).length || 0);
 }
 
 // Render products in the grid
@@ -197,10 +277,12 @@ function createProductCard(product) {
         ? 'price-alert' 
         : '';
     
+    const safeUrl = product.url || '#';
+    const clickableName = safeUrl && safeUrl !== '#' ? `<a href="${safeUrl}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;">${product.name || 'Unknown Product'}</a>` : (product.name || 'Unknown Product');
     return `
         <div class="product-card ${priceStatusClass}">
-            <div class="product-name">${product.name || 'Unknown Product'}</div>
-            <div class="product-url">${product.url || 'No URL'}</div>
+            <div class="product-name">${clickableName}</div>
+            <div class="product-url">${safeUrl !== '#' ? safeUrl : 'No URL'}</div>
             
             <div class="price-info">
                 <div class="price-item">
@@ -230,6 +312,35 @@ function createProductCard(product) {
             </div>
         </div>
     `;
+}
+
+// Load Alerts list
+async function loadAlerts() {
+    try {
+        const data = await makeApiCall('/api/alerts');
+        const alerts = data.alerts || [];
+        window.__alertsCache = alerts;
+        const countEl = document.getElementById('priceAlerts');
+        if (countEl) countEl.textContent = String(alerts.length);
+        const container = document.getElementById('alertsContainer');
+        if (!container) return;
+        if (alerts.length === 0) {
+            container.innerHTML = '<div class="empty-state">No alerts yet.</div>';
+            return;
+        }
+        container.innerHTML = alerts.map(a => `
+            <div class="product-card">
+                <div class="product-name"><a href="${a.url}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;">${a.url}</a></div>
+                <div class="price-info">
+                    <div class="price-item"><div class="price-label">Triggered Price</div><div class="price-value current-price">₹${a.price}</div></div>
+                    <div class="price-item"><div class="price-label">Threshold</div><div class="price-value threshold-price">₹${a.threshold}</div></div>
+                </div>
+                <div style="font-size:12px;color:#666;">${new Date(a.timestamp).toLocaleString()}</div>
+            </div>
+        `).join('');
+    } catch (e) {
+        console.error('Failed to load alerts', e);
+    }
 }
 
 // Open threshold update modal
@@ -399,4 +510,4 @@ function showError(message) {
     }, 5000);
 }
 
-console.log('Dashboard script loaded'); 
+console.log('Dashboard script loaded');
