@@ -1,3 +1,4 @@
+from unittest import result
 from motor.motor_asyncio import AsyncIOMotorClient
 from datetime import datetime
 from typing import List, Dict, Optional
@@ -34,6 +35,7 @@ class Database:
         self.products = self.db.products
         self.price_history = self.db.price_history
         self.alerts = self.db.alerts
+        self.users = self.db.users
 
     def _serialize_document(self, doc):
         """Convert MongoDB document to JSON-serializable format."""
@@ -175,12 +177,17 @@ class Database:
         return result.modified_count > 0
 
     async def stop_tracking_product(self, url: str, user_id: str = "default") -> bool:
-        """Stop tracking a product by setting is_active to False."""
+        """Stop tracking a product by setting is_active to False.
+
+        Treat as idempotent: if the product exists but is already inactive,
+        consider the operation successful to avoid 404s on repeated requests.
+        """
         result = await self.products.update_one(
             {'url': url, 'user_id': user_id},
             {'$set': {'is_active': False}}
         )
-        return result.modified_count > 0
+        # Success if a matching document exists regardless of whether it changed
+        return result.matched_count > 0
 
     async def remove_product_completely(self, url: str, user_id: str = "default") -> bool:
         """Completely remove a product and its history."""
@@ -195,8 +202,24 @@ class Database:
         
         return product_result.deleted_count > 0
 
+    async def remove_alert(self, url: str, user_id: str = "default") -> bool:
+        """Remove a single alert for a product & user."""
+        result = await self.alerts.delete_one({'url': url, 'user_id': user_id})
+        return result.deleted_count > 0
+
     async def get_user_alerts(self, user_id: str = "default") -> List[Dict]:
         """Get alerts for a user sorted by newest first."""
         cursor = self.alerts.find({ 'user_id': user_id }).sort('timestamp', -1)
         alerts = await cursor.to_list(length=None)
         return self._serialize_documents(alerts)
+
+    async def set_user_email(self, user_id: str, email: str) -> None:
+        await self.users.update_one(
+            { 'user_id': user_id },
+            { '$set': { 'user_id': user_id, 'email': email, 'updated_at': datetime.utcnow() } },
+            upsert=True
+        )
+
+    async def get_user_email(self, user_id: str) -> Optional[str]:
+        doc = await self.users.find_one({ 'user_id': user_id })
+        return doc.get('email') if doc else None

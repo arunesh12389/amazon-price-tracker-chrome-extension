@@ -113,14 +113,30 @@ window.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('priceThreshold').value = Math.round(Number(product.currentPrice) * 0.9);
         }
     }
+
+    // Auto-load history and prediction to render graph when 5+ data points exist
+    try {
+        if (product && product.url) {
+            const result = await makeApiCall(`/api/history-prediction?url=${encodeURIComponent(product.url)}&user_id=default`, 'GET');
+            if (result && result.prediction) {
+                await renderPredictionGraph(result.prediction);
+            } else if (result && typeof result.data_points === 'number') {
+                // Show progress if not enough points
+                const remaining = Math.max(0, (result.min_required || 5) - result.data_points);
+                showDataCollectionProgress(remaining);
+            }
+        }
+    } catch (e) {
+        console.warn('Auto-load graph failed:', e.message);
+    }
 });
 
 document.getElementById('trackBtn').onclick = async () => {
     try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         // Site validation
-        if (!tab.url.includes('amazon.in') && !tab.url.includes('flipkart.com')) {
-            alert('This site is not supported. Please use Amazon or Flipkart.');
+        if (!tab.url.includes('amazon.in') ) {
+            alert('This site is not supported. Please use Amazon');
             return;
         }
         // Get product data
@@ -154,10 +170,27 @@ document.getElementById('trackBtn').onclick = async () => {
         const result = await makeApiCall('/api/track', 'POST', payload);
         // Show success and render graph or data points needed
         const threshold = parseFloat(document.getElementById('priceThreshold')?.value || 1000);
+
+
+
         if (result.data_points_needed > 0) {
-            showTrackingStatus(`✅ Tracking started! We're still collecting past price data to make a prediction. ${result.data_points_needed} more prices are needed. We'll check again in 30 minutes.`, true);
+            const waitMinutes = result.data_points_needed * 2; // since scheduler runs every 2 minutes
+            showTrackingStatus(
+                `✅ Tracking started! We're still collecting price data to make a prediction. 
+                ${result.data_points_needed} more prices are needed. Please check again in ~${waitMinutes} minutes.`,
+                true
+            );
             showDataCollectionProgress(result.data_points_needed);
-        } else {
+            try {
+                const history = await makeApiCall(`/api/history?url=${encodeURIComponent(product.url)}&user_id=default`, 'GET');
+                if (history && history.length > 0) {
+                    await renderHistoryGraph(history);  // <-- new function
+                }
+            } catch (e) {
+                console.warn("Failed to load history graph:", e.message);
+            }
+        } 
+        else {
             showTrackingStatus(`✅ Success! You will be notified when the price drops below ₹${threshold}`, true);
             if (result.prediction) {
                 // Ensure Chart.js is loaded before rendering prediction graph
@@ -173,12 +206,11 @@ document.getElementById('trackBtn').onclick = async () => {
 };
 
 // Graph rendering function
-async function renderPredictionGraph(predictionData) {
+async function renderHistoryGraph(history) {
   const graphContainer = document.getElementById('graphContainer');
   const canvas = document.getElementById('graphCanvas');
   const ctx = canvas.getContext('2d');
   
-  // Function to actually render the chart once Chart.js is available
   function renderChart() {
     try {
       // Clear previous graph if exists
@@ -188,42 +220,42 @@ async function renderPredictionGraph(predictionData) {
 
       // Create new chart
       window.predictionChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: predictionData.dates,
-          datasets: [{
-            label: 'Price Prediction',
-            data: predictionData.prices,
-            borderColor: '#4CAF50',
-            backgroundColor: 'rgba(76, 175, 80, 0.1)',
-            tension: 0.4,
-            fill: true
-          }]
-        },
-        options: {
-          responsive: true,
-          plugins: {
-            legend: { display: true },
-            tooltip: {
-              callbacks: {
-                label: (context) => `₹${context.raw.toFixed(2)}`
-              }
-            }
+          type: 'line',
+          data: {
+            labels: history.map(h => new Date(h.date).toLocaleString()),
+            datasets: [{
+              label: 'Collected Prices',
+              data: history.map(h => h.price),
+              borderColor: '#2196F3',
+              backgroundColor: 'rgba(33, 150, 243, 0.1)',
+              tension: 0.3,
+              fill: true
+            }]
           },
-          scales: {
-            y: {
-              beginAtZero: false,
-              ticks: {
-                callback: (value) => `₹${value}`
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { display: true },
+              tooltip: {
+                callbacks: {
+                  label: (context) => `₹${context.raw.toFixed(2)}`
+                }
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: false,
+                ticks: {
+                  callback: (value) => `₹${value}`
+                }
               }
             }
           }
-        }
       });
 
       // Update recommendation
-      document.getElementById('recText').textContent = predictionData.recommendation;
-      document.getElementById('confText').textContent = (predictionData.confidence * 100).toFixed(0);
+      // document.getElementById('recText').textContent = predictionData.recommendation;
+      // document.getElementById('confText').textContent = (predictionData.confidence * 100).toFixed(0);
       
       // Show graph container
       graphContainer.style.display = 'block';
@@ -340,12 +372,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
 });
 
-// Call this when popup opens
 chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
   injectContentScript(tabs[0].id);
 });
 
-// Ensure Chart.js is available
 // Check Chart.js availability when window loads
 window.onload = function() {
   console.log('Window loaded, checking Chart.js availability');

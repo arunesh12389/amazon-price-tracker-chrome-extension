@@ -212,8 +212,9 @@ function updateStats(data) {
 // Render products in the grid
 function renderProducts(products) {
     const container = document.getElementById('productsContainer');
-    
-    if (!products || products.length === 0) {
+    const activeProducts = products.filter(p => p.is_active !== false);
+
+    if (!activeProducts || activeProducts.length === 0) {
         container.innerHTML = `
             <div class="empty-state">
                 <h3>📦 No Products Tracked</h3>
@@ -223,8 +224,8 @@ function renderProducts(products) {
         `;
         return;
     }
-    
-    const productsHTML = products.map(product => createProductCard(product)).join('');
+
+    const productsHTML = activeProducts.map(product => createProductCard(product)).join('');
     container.innerHTML = `
         <div class="product-grid">
             ${productsHTML}
@@ -246,19 +247,11 @@ function addProductButtonListeners() {
         });
     });
     
-    // Stop tracking buttons
-    document.querySelectorAll('.stop-tracking-btn').forEach(btn => {
+    // Use a single unified action: Stop Tracking (acts as remove)
+    document.querySelectorAll('.stop-tracking-btn, .remove-product-btn').forEach(btn => {
         btn.addEventListener('click', function() {
             const url = this.getAttribute('data-url');
             stopTracking(url);
-        });
-    });
-    
-    // Remove product buttons
-    document.querySelectorAll('.remove-product-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            const url = this.getAttribute('data-url');
-            removeProduct(url);
         });
     });
 }
@@ -303,11 +296,8 @@ function createProductCard(product) {
                 <button class="btn btn-primary update-threshold-btn" data-url="${product.url}" data-threshold="${threshold}">
                     📝 Update Threshold
                 </button>
-                <button class="btn btn-warning stop-tracking-btn" data-url="${product.url}">
-                    ⏸️ Stop Tracking
-                </button>
-                <button class="btn btn-danger remove-product-btn" data-url="${product.url}">
-                    🗑️ Remove
+                <button class="btn btn-danger stop-tracking-btn" data-url="${product.url}">
+                    🗑️ Stop Tracking
                 </button>
             </div>
         </div>
@@ -336,10 +326,50 @@ async function loadAlerts() {
                     <div class="price-item"><div class="price-label">Threshold</div><div class="price-value threshold-price">₹${a.threshold}</div></div>
                 </div>
                 <div style="font-size:12px;color:#666;">${new Date(a.timestamp).toLocaleString()}</div>
+                <div class="actions" style="margin-top:10px;">
+                    <button class="btn btn-danger remove-alert-btn" data-url="${a.url}">
+                        🗑️ Remove Alert
+                    </button>
+                </div>
             </div>
         `).join('');
+        // Attach event listeners for remove buttons
+        document.querySelectorAll('.remove-alert-btn').forEach(btn => {
+            btn.addEventListener('click', function () {
+                const url = this.getAttribute('data-url');
+                removeAlert(url);
+            });
+        });
+
+
     } catch (e) {
         console.error('Failed to load alerts', e);
+    }
+}
+
+// Remove alert function
+async function removeAlert(url) {
+    if (!confirm("⚠️ Do you really want to remove this alert?")) return;
+    try {
+        const response = await makeApiCall('/api/alerts', 'DELETE', {
+            url: url,
+            user_id: 'default'
+        });
+        console.log('Alert removed:', response);
+        // Remove locally
+        chrome.storage.local.get(['alerts'], (result) => {
+            let alerts = result.alerts || [];
+            alerts = alerts.filter(a => a.url !== url);
+            chrome.storage.local.set({ alerts }, () => {
+                console.log('Alert removed locally:', url);
+                loadAlerts();
+                updateStats({ total_products: currentProducts.length });
+            });
+        });
+        showSuccess("✅ Alert removed successfully.");
+    } catch (err) {
+        console.error("Failed to remove alert:", err);
+        showError("❌ Failed to remove alert: " + err.message);
     }
 }
 
@@ -395,23 +425,10 @@ function stopTracking(url) {
     currentProductUrl = url;
     currentAction = 'stop';
     
-    document.getElementById('confirmTitle').textContent = 'Stop Tracking Product';
-    document.getElementById('confirmMessage').textContent = 'Are you sure you want to stop tracking this product? You can resume tracking later.';
-    document.getElementById('confirmBtn').textContent = 'Stop Tracking';
-    document.getElementById('confirmBtn').className = 'btn btn-warning';
-    
-    document.getElementById('confirmModal').style.display = 'block';
-}
-
-// Remove product completely
-function removeProduct(url) {
-    console.log('Remove product called for URL:', url);
-    currentProductUrl = url;
-    currentAction = 'remove';
-    
-    document.getElementById('confirmTitle').textContent = 'Remove Product';
-    document.getElementById('confirmMessage').textContent = 'Are you sure you want to completely remove this product? This will delete all price history and cannot be undone.';
-    document.getElementById('confirmBtn').textContent = 'Remove';
+    document.getElementById('confirmTitle').textContent = '⚠️ Stop Tracking Product';
+    document.getElementById('confirmMessage').textContent =
+        '⚠️ Warning: Stopping tracking this product will also remove all its alerts. Do you want to continue?';
+    document.getElementById('confirmBtn').textContent = 'Yes, Stop Tracking';
     document.getElementById('confirmBtn').className = 'btn btn-danger';
     
     document.getElementById('confirmModal').style.display = 'block';
@@ -426,14 +443,9 @@ async function confirmAction() {
     }
     
     try {
-        console.log('Confirming action:', currentAction, 'for URL:', currentProductUrl);
-        
+        console.log('Confirming action:', currentAction, 'for URL:', currentProductUrl); 
         let endpoint, method;
-        
-        if (currentAction === 'stop') {
-            endpoint = '/api/product/stop-tracking';
-            method = 'POST';
-        } else if (currentAction === 'remove') {
+        if (currentAction === 'stop' || currentAction === 'remove') {
             endpoint = '/api/product/remove';
             method = 'DELETE';
         }
@@ -444,13 +456,49 @@ async function confirmAction() {
         });
         
         console.log('Action response:', response);
+        chrome.storage.local.get(['trackedProducts','alerts'], (result) => {
+            let tracked = result.trackedProducts || {};
+            let alerts = result.alerts || [];
+
+            delete tracked[currentProductUrl];
+            alerts = alerts.filter(alert => alert.url !== currentProductUrl);
+
+            chrome.storage.local.set({ trackedProducts: tracked, alerts: alerts }, () => {
+                console.log('Product and alert removed locally:', currentProductUrl);
+                loadUserProducts();
+            });
+        });
+
+        // Update UI
+        currentProducts = currentProducts.filter(p => p.url !== currentProductUrl);
+        renderProducts(currentProducts);
+        updateStats({ total_products: currentProducts.length });
+
+        loadUserProducts(); // Refresh the list
         showSuccess(response.message);
         closeModal();
-        loadUserProducts(); // Refresh the list
         
     } catch (error) {
         console.error('Error performing action:', error);
         showError('Failed to perform action: ' + error.message);
+        if (error.message.includes('Product not found')) {
+            chrome.storage.local.get(['trackedProducts'], (result) => {
+                let tracked = result.trackedProducts || {};
+                let alerts = result.alerts || [];
+
+                delete tracked[currentProductUrl];
+                alerts = alerts.filter(alert => alert.url !== currentProductUrl);
+
+                chrome.storage.local.set({ trackedProducts: tracked, alerts: alerts }, () => {
+                    console.log('Cleaned up locally missing product + alert:', currentProductUrl);
+                    currentProducts = currentProducts.filter(p => p.url !== currentProductUrl);
+                    renderProducts(currentProducts);
+                    updateStats({ total_products: currentProducts.length });
+                    // loadUserProducts();
+                });
+            });
+        }
+        
     }
 }
 

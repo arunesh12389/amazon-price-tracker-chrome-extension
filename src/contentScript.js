@@ -1039,11 +1039,7 @@ const injectPriceHistoryUI = async () => {
   chartToggle.textContent = '📈 Show Price Chart';
   container.appendChild(chartToggle);
   
-  // Add recommendation container
-  const recommendationContainer = document.createElement('div');
-  recommendationContainer.className = 'price-tracker-recommendation';
-  recommendationContainer.innerHTML = '<strong>Loading recommendation...</strong>';
-  container.appendChild(recommendationContainer);
+  // Recommendation will only be added when prediction is available
   
   // Add buttons
   const buttonsContainer = document.createElement('div');
@@ -1057,14 +1053,9 @@ const injectPriceHistoryUI = async () => {
   alertButton.className = 'price-tracker-button price-alert-button';
   alertButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Set Price Alert';
   
-  // Add wishlist button
-  const wishlistButton = document.createElement('button');
-  wishlistButton.className = 'price-tracker-button wishlist-button';
-  wishlistButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Add to Wishlist';
-  
+  // Remove Add to Wishlist feature per requirement
   buttonsContainer.appendChild(trackButton);
   buttonsContainer.appendChild(alertButton);
-  buttonsContainer.appendChild(wishlistButton);
   container.appendChild(buttonsContainer);
   
   // Insert our UI into the page
@@ -1236,11 +1227,6 @@ const injectPriceHistoryUI = async () => {
       }
       chartContainer.style.display = 'block';
       await renderPriceChart(chartContainer, predictionData.prediction);
-      const pred = predictionData.prediction || {};
-      const conf = typeof pred.confidence === 'number' ? pred.confidence : Math.random() * (0.95 - 0.65) + 0.65;
-      const confPct = (conf * 100).toFixed(0);
-      const recText = pred.recommendation || 'No recommendation';
-      recommendationContainer.innerHTML = `<strong>Recommendation:</strong> ${recText}<span style="margin-left:10px;font-size:12px;color:#666;">(${confPct}% confidence)</span>`;
       chartToggle.disabled = false;
       chartToggle.textContent = '📉 Hide Price Chart';
       chartLoaded = true;

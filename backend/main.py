@@ -6,14 +6,42 @@ from datetime import datetime, timedelta
 import uvicorn
 
 from scraper.amazon_scraper import AmazonScraper
-from scraper.flipkart_scraper import FlipkartScraper
 from predictor.predict import PricePredictor
 from database.db import Database
 from alerts.notifier import Notifier
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import asyncio
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="Smart Price Tracker API")
+scheduler = AsyncIOScheduler()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("🟢 Starting scheduler on application startup...")
+    scheduler.add_job(scheduled_price_update, 'interval', minutes=2, id='price_update_job')
+    
+    jobs = scheduler.get_jobs()
+    print(f"📋 Scheduler jobs: {[job.id for job in jobs]}")
+    
+    try:
+        scheduler.start()
+        print("✅ Scheduler started successfully!")
+    except Exception as e:
+        print(f"❌ Failed to start scheduler: {e}")
+    
+    job = scheduler.get_job('price_update_job')
+    if job:
+        next_run = job.next_run_time
+        print(f"⏰ Next scheduled run: {next_run}")
+    else:
+        print("⚠️ Price update job not found!")
+    
+    yield  
+    
+    print("🔴 Shutting down scheduler...")
+    scheduler.shutdown()
+
+app = FastAPI(title="Smart Price Tracker API", lifespan=lifespan)
 
 # Enable CORS for Chrome Extension
 app.add_middleware(
@@ -70,6 +98,14 @@ class AddPricePointRequest(BaseModel):
     user_id: str = "default"
     timestamp: Optional[str] = None
 
+class UserEmailRequest(BaseModel):
+    user_id: str = "default"
+    email: str
+
+class AlertActionRequest(BaseModel):
+    url: str
+    user_id: str = "default"
+
 @app.get("/")
 def root():
     return {"message": "FastAPI is working!"}
@@ -125,7 +161,7 @@ async def track_product(request: TrackRequest):
                 prediction = predictor.predict_prices(history)
             else:
                 data_points_needed = 5 - len(history)
-                next_update = (datetime.utcnow() + timedelta(minutes=30)).isoformat()  # Changed from hours=1 to minutes=30
+                next_update = (datetime.utcnow() + timedelta(minutes=2)).isoformat()  
         except Exception as pred_e:
             print(f"Prediction error: {pred_e}")
             prediction = None
@@ -224,7 +260,7 @@ async def predict_price(body: Dict) -> Dict:
 async def get_user_products(user_id: str = "default"):
     """Get all tracked products for a specific user."""
     try:
-        products = await db.get_user_tracked_products(user_id)
+        products = await db.get_user_tracked_products(user_id=user_id)
         return {
             "user_id": user_id,
             "products": products,
@@ -277,8 +313,7 @@ async def update_product_threshold(request: UpdateThresholdRequest):
 async def stop_tracking_product(request: ProductActionRequest):
     """Stop tracking a product (set to inactive)."""
     try:
-        success = await db.stop_tracking_product(request.url, request.user_id)
-        
+        success = await db.stop_tracking_product(request.url, request.user_id)        
         if success:
             return {
                 "status": "success",
@@ -317,6 +352,39 @@ async def get_alerts(user_id: str = "default"):
     try:
         alerts = await db.get_user_alerts(user_id)
         return { "user_id": user_id, "alerts": alerts, "total_alerts": len(alerts) }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/alerts")
+async def remove_alert(request: AlertActionRequest):
+    """Remove a single alert for a product & user."""
+    try:
+        success = await db.remove_alert(request.url, request.user_id)
+        if success:
+            return {
+                "status": "success",
+                "message": "Alert removed successfully"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Alert not found")
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/user/email")
+async def set_user_email(request: UserEmailRequest):
+    try:
+        await db.set_user_email(request.user_id, request.email)
+        return { "status": "success", "message": "Email saved" }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/user/email")
+async def get_user_email(user_id: str = "default"):
+    try:
+        email = await db.get_user_email(user_id)
+        return { "user_id": user_id, "email": email }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -385,6 +453,19 @@ async def scheduled_price_update():
                     threshold = product.get('threshold', 0)
                     if price <= threshold:
                         await db.add_alert(url, price, threshold, user_id)
+                        # Email notification if configured
+                        try:
+                            user_email = await db.get_user_email(user_id)
+                            if user_email:
+                                await notifier.send_email_alert(
+                                    to_email=user_email,
+                                    product_name=product.get('name', 'Product'),
+                                    current_price=price,
+                                    threshold=threshold,
+                                    url=url
+                                )
+                        except Exception as notify_err:
+                            print(f"[Scheduler] Email notify failed: {notify_err}")
                         print(f"[Scheduler] 🚨 Price alert for {url}: ₹{price} <= ₹{threshold}")
                     
                     print(f"[Scheduler] Updated price for {url}: ₹{price}")
@@ -395,8 +476,15 @@ async def scheduled_price_update():
     except Exception as e:
         print(f"[Scheduler] General error: {e}")
 
-if __name__ == "__main__":
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(scheduled_price_update, 'interval', minutes=30)  # Changed from hours=1 to minutes=30
-    scheduler.start()
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+@app.get("/api/test-scheduler")
+async def test_scheduler_manually():
+    """Manual endpoint to test the scheduler function."""
+    print("🧪 Manually testing scheduler function...")
+    try:
+        await scheduled_price_update()
+        return {"status": "success", "message": "Scheduler test completed"}
+    except Exception as e:
+        print(f"❌ Scheduler test failed: {e}")
+        return {"status": "error", "message": str(e)}
+
