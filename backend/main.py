@@ -72,6 +72,7 @@ class TrackRequest(BaseModel):
     name: str
     price: float
     threshold: float
+    image_url: Optional[str] = None
     user_id: str = "default"  # Add user identification
     last_checked: Optional[str] = None
 
@@ -105,6 +106,14 @@ class UserEmailRequest(BaseModel):
 class AlertActionRequest(BaseModel):
     url: str
     user_id: str = "default"
+
+class ClearAlertsRequest(BaseModel):
+    user_id: str = "default"
+
+class MarkAlertsNotifiedRequest(BaseModel):
+    alert_ids: List[str]
+    user_id: str = "default"
+
 
 @app.get("/")
 def root():
@@ -141,13 +150,14 @@ async def track_product(request: TrackRequest):
             name=request.name,
             threshold=request.threshold,
             current_price=request.price,
+            image_url=request.image_url,
             user_id=request.user_id
         )
         
         # Add to price history
         await db.update_price(request.url, request.price, request.user_id)
-        
-        # Generate prediction
+
+
         history = await db.get_price_history(request.url, request.user_id)
         if not history:
             history = [{"date": datetime.utcnow(), "price": request.price}]
@@ -347,10 +357,10 @@ async def remove_product_completely(request: ProductActionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/alerts")
-async def get_alerts(user_id: str = "default"):
-    """Return all recorded alerts for the user (latest first)."""
+async def get_alerts(user_id: str = "default", new_only: bool = False):
+    """Return alerts for the user. If new_only is true, returns only un-notified alerts."""
     try:
-        alerts = await db.get_user_alerts(user_id)
+        alerts = await db.get_user_alerts(user_id, only_new=new_only)
         return { "user_id": user_id, "alerts": alerts, "total_alerts": len(alerts) }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -369,6 +379,26 @@ async def remove_alert(request: AlertActionRequest):
             raise HTTPException(status_code=404, detail="Alert not found")
     except HTTPException as e:
         raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/alerts/all")
+async def remove_all_alerts(request: ClearAlertsRequest):
+    try:
+        deleted_count = await db.remove_all_alerts_for_user(request.user_id)
+        return {
+            "status": "success",
+            "message": f"{deleted_count} alerts removed successfully."
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/alerts/mark-notified")
+async def mark_alerts_as_notified(request: MarkAlertsNotifiedRequest):
+    """Marks a list of alerts as having been notified."""
+    try:
+        modified_count = await db.mark_alerts_notified(request.alert_ids, request.user_id)
+        return {"status": "success", "message": f"{modified_count} alerts marked as notified."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -415,10 +445,12 @@ async def add_price_point(request: AddPricePointRequest):
 
 async def scheduled_price_update():
     print("[Scheduler] Running scheduled price update...")
+    db_instance = Database()
     try:
         # Get all products for all users
-        products = await db.get_products_to_check()
-        
+
+        products = await db_instance.get_products_to_check()
+
         # Group by user for better organization
         user_products = {}
         for product in products:
@@ -440,35 +472,43 @@ async def scheduled_price_update():
                 try:
                     if 'amazon' in url:
                         scraper = AmazonScraper()
-                    elif 'flipkart' in url:
-                        scraper = FlipkartScraper()
                     else:
                         print(f"[Scheduler] Unsupported site for url: {url}")
                         continue
                         
-                    price = await scraper.get_price(url)
-                    await db.update_price(url, price, user_id)
+                    details = await scraper.get_price_and_details(url)
+                
+                    if details and 'price' in details:
+                        price = details['price']
+                        await db_instance.update_price(url, price, user_id)
                     
-                    # Check if price dropped below threshold
-                    threshold = product.get('threshold', 0)
-                    if price <= threshold:
-                        await db.add_alert(url, price, threshold, user_id)
-                        # Email notification if configured
-                        try:
-                            user_email = await db.get_user_email(user_id)
-                            if user_email:
-                                await notifier.send_email_alert(
-                                    to_email=user_email,
-                                    product_name=product.get('name', 'Product'),
-                                    current_price=price,
-                                    threshold=threshold,
-                                    url=url
-                                )
-                        except Exception as notify_err:
-                            print(f"[Scheduler] Email notify failed: {notify_err}")
-                        print(f"[Scheduler] 🚨 Price alert for {url}: ₹{price} <= ₹{threshold}")
-                    
-                    print(f"[Scheduler] Updated price for {url}: ₹{price}")
+                        # Check if price dropped below threshold
+                        threshold = product.get('threshold', 0)
+                        if price <= threshold:
+                            await db_instance.add_alert(
+                                url=url, 
+                                price=price, 
+                                threshold=threshold, 
+                                user_id=user_id, 
+                                name=product.get('name'), 
+                                image_url=product.get('image_url')
+                            )
+                            # Email notification if configured
+                            try:
+                                user_email = await db_instance.get_user_email(user_id)
+                                if user_email:
+                                    await notifier.send_email_alert(
+                                        to_email=user_email,
+                                        product_name=product.get('name', 'Product'),
+                                        current_price=price,
+                                        threshold=threshold,
+                                        url=url
+                                    )
+                            except Exception as notify_err:
+                                print(f"[Scheduler] Email notify failed: {notify_err}")
+                            print(f"[Scheduler] 🚨 Price alert for {url}: ₹{price} <= ₹{threshold}")
+                        
+                        print(f"[Scheduler] Updated price for {url}: ₹{price}")
                     
                 except Exception as e:
                     print(f"[Scheduler] Error updating {url}: {e}")
@@ -488,3 +528,5 @@ async def test_scheduler_manually():
         print(f"❌ Scheduler test failed: {e}")
         return {"status": "error", "message": str(e)}
 
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)

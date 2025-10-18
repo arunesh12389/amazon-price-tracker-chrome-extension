@@ -9,74 +9,51 @@ class AmazonScraper:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
 
-    async def get_price(self, url: str) -> float:
-        """Extract price from Amazon product page using Playwright."""
+    async def get_price_and_details(self, url: str) -> dict:
+        """Extracts price, name, and image URL from an Amazon product page."""
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
             
             try:
-                # Set user agent and navigate to URL
                 await page.set_extra_http_headers(self.headers)
-                await page.goto(url, wait_until='networkidle')
+                await page.goto(url, wait_until='domcontentloaded', timeout=60000)
                 
-                # Wait for price element to be visible
-                await page.wait_for_selector('.a-price-whole', timeout=5000)
+                # Wait for the main price or the title to ensure the page is loaded
+                await page.wait_for_selector('#productTitle, .a-price-whole', timeout=15000)
                 
-                # Get the page content
                 content = await page.content()
                 soup = BeautifulSoup(content, 'html.parser')
                 
-                # Extract price components
-                price_whole = soup.select_one('.a-price-whole')
-                price_fraction = soup.select_one('.a-price-fraction')
-                
-                if not price_whole:
-                    raise ValueError('Price element not found')
-                
-                # Clean and combine price components
-                whole = re.sub(r'[^0-9]', '', price_whole.text)
-                fraction = re.sub(r'[^0-9]', '', price_fraction.text) if price_fraction else '00'
-                
-                # Convert to float
-                price = float(f"{whole}.{fraction}")
-                
-                return price
-            
-            except Exception as e:
-                raise Exception(f"Error scraping Amazon price: {str(e)}")
-            
-            finally:
-                await browser.close()
+                # --- Extract Price ---
+                price_whole_elem = soup.select_one('.a-price-whole')
+                price_fraction_elem = soup.select_one('.a-price-fraction')
+                price = 0.0
+                if price_whole_elem:
+                    whole = re.sub(r'[^0-9]', '', price_whole_elem.text)
+                    fraction = re.sub(r'[^0-9]', '', price_fraction_elem.text) if price_fraction_elem else '00'
+                    price = float(f"{whole}.{fraction}")
 
-    async def get_product_details(self, url: str) -> dict:
-        """Extract additional product details from Amazon page."""
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            
-            try:
-                await page.set_extra_http_headers(self.headers)
-                await page.goto(url, wait_until='networkidle')
+                # --- Extract Name ---
+                name_elem = soup.select_one('#productTitle')
+                name = name_elem.text.strip() if name_elem else "Product Name Not Found"
+
+                # --- Extract Image ---
+                image_elem = soup.select_one('#landingImage')
+                image_url = image_elem['src'] if image_elem and 'src' in image_elem.attrs else None
                 
-                content = await page.content()
-                soup = BeautifulSoup(content, 'html.parser')
-                
-                # Extract product details
-                title = soup.select_one('#productTitle')
-                rating = soup.select_one('.a-icon-star-small')
-                availability = soup.select_one('#availability')
-                image = soup.select_one('#landingImage')
-                
+                if not price or not name:
+                    raise ValueError("Could not extract essential product details (name or price).")
+
                 return {
-                    'title': title.text.strip() if title else None,
-                    'rating': rating.text.strip() if rating else None,
-                    'availability': availability.text.strip() if availability else None,
-                    'image_url': image['src'] if image else None
+                    'price': price,
+                    'name': name,
+                    'image_url': image_url
                 }
             
             except Exception as e:
-                raise Exception(f"Error scraping Amazon product details: {str(e)}")
+                print(f"Error scraping Amazon page {url}: {str(e)}")
+                raise
             
             finally:
                 await browser.close()

@@ -59,7 +59,7 @@ class Database:
         """Convert list of MongoDB documents to JSON-serializable format."""
         return [self._serialize_document(doc) for doc in docs]
 
-    async def add_tracked_product(self, url: str, name: str, threshold: float, current_price: float, user_id: str = "default") -> str:
+    async def add_tracked_product(self, url: str, name: str, threshold: float, current_price: float, image_url: Optional[str], user_id: str = "default") -> str:
 
         """Add a new product to track."""
         product = {
@@ -67,7 +67,8 @@ class Database:
             'name': name,
             'threshold': threshold,
             'current_price': current_price,
-            'user_id': user_id,  # Add user identification
+            'image_url': image_url,
+            'user_id': user_id, 
             'created_at': datetime.utcnow(),
             'last_checked': datetime.utcnow(),
             'is_active': True
@@ -118,13 +119,15 @@ class Database:
         products = await cursor.to_list(length=None)
         return self._serialize_documents(products)
 
-    async def add_alert(self, url: str, price: float, threshold: float, user_id: str = "default") -> None:
+    async def add_alert(self, url: str, price: float, threshold: float, user_id: str = "default", name: Optional[str] = None, image_url: Optional[str] = None) -> None:
         """Record a price alert."""
         alert = {
             'url': url,
             'price': price,
             'threshold': threshold,
-            'user_id': user_id,  # Add user identification
+            'user_id': user_id,  
+            'name': name,
+            'image_url': image_url,
             'timestamp': datetime.utcnow(),
             'notified': False
         }
@@ -186,7 +189,6 @@ class Database:
             {'url': url, 'user_id': user_id},
             {'$set': {'is_active': False}}
         )
-        # Success if a matching document exists regardless of whether it changed
         return result.matched_count > 0
 
     async def remove_product_completely(self, url: str, user_id: str = "default") -> bool:
@@ -207,11 +209,35 @@ class Database:
         result = await self.alerts.delete_one({'url': url, 'user_id': user_id})
         return result.deleted_count > 0
 
-    async def get_user_alerts(self, user_id: str = "default") -> List[Dict]:
+
+    async def get_user_alerts(self, user_id: str = "default", only_new: bool = False) -> List[Dict]:
         """Get alerts for a user sorted by newest first."""
-        cursor = self.alerts.find({ 'user_id': user_id }).sort('timestamp', -1)
+        query = {'user_id': user_id}
+        if only_new:
+            query['notified'] = False
+        cursor = self.alerts.find(query).sort('timestamp', -1)
         alerts = await cursor.to_list(length=None)
         return self._serialize_documents(alerts)
+
+
+    async def mark_alerts_notified(self, alert_ids: List[str], user_id: str = "default") -> int:
+            """Marks a list of alerts as notified for a user."""
+            if not alert_ids:
+                return 0
+            
+            object_ids = [ObjectId(alert_id) for alert_id in alert_ids]
+            
+            result = await self.alerts.update_many(
+                {'_id': {'$in': object_ids}, 'user_id': user_id},
+                {'$set': {'notified': True}}
+            )
+            return result.modified_count
+
+
+    async def remove_all_alerts_for_user(self, user_id: str = "default") -> int:
+        """Remove all alerts for a specific user."""
+        result = await self.alerts.delete_many({'user_id': user_id})
+        return result.deleted_count
 
     async def set_user_email(self, user_id: str, email: str) -> None:
         await self.users.update_one(

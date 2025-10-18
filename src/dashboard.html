@@ -74,13 +74,20 @@
         .products-section {
             margin-top: 30px;
         }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center; /* ALIGN ITEMS VERTICALLY */
+            margin-bottom: 20px;
+        }
         
         .section-title {
             font-size: 1.5em;
-            margin-bottom: 20px;
             color: #333;
             border-bottom: 2px solid #667eea;
             padding-bottom: 10px;
+            margin: 0;
         }
         
         .product-grid {
@@ -95,6 +102,25 @@
             border-radius: 8px;
             padding: 20px;
             transition: transform 0.2s, box-shadow 0.2s;
+            display: flex; 
+            flex-direction: column;
+        }
+
+        /* UPDATED IMAGE STYLES */
+        .product-image {
+            width: 100%;
+            height: 180px; 
+            object-fit: contain; 
+            margin-bottom: 15px;
+            border-radius: 5px;
+            background-color: #f8f9fa; /* Background for placeholder */
+            display: block; /* Ensure it behaves like a block element */
+        }
+
+        .product-details {
+            display: flex;
+            flex-direction: column;
+            flex-grow: 1; 
         }
         
         .product-card:hover {
@@ -103,11 +129,21 @@
         }
         
         .product-name {
-            font-size: 1.2em;
-            font-weight: bold;
+            font-size: 1.1em;
+            font-weight: 600;
             color: #333;
             margin-bottom: 10px;
             word-break: break-word;
+            flex-grow: 1;
+        }
+
+        .product-name a {
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .product-name a:hover {
+            color: #667eea;
         }
         
         .product-url {
@@ -152,18 +188,15 @@
         }
         
         .price-alert {
-            border: 2px solid #dc3545;
-            background: linear-gradient(135deg, #fff5f5 0%, #ffe6e6 100%);
-        }
-        
-        .price-alert .product-name {
-            color: #dc3545;
+            border-left: 4px solid #dc3545;
+            background-color: #fffafa;
         }
         
         .actions {
             display: flex;
             gap: 10px;
             flex-wrap: wrap;
+            margin-top: auto;
         }
         
         .btn {
@@ -177,136 +210,57 @@
             min-width: 80px;
         }
         
-        .btn-primary {
-            background: #667eea;
-            color: white;
-        }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover { background: #5a6fd8; }
+        .btn-warning { background: #ffc107; color: #333; }
+        .btn-warning:hover { background: #e0a800; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-danger:hover { background: #c82333; }
         
-        .btn-primary:hover {
-            background: #5a6fd8;
-        }
-        
-        .btn-warning {
-            background: #ffc107;
-            color: #333;
-        }
-        
-        .btn-warning:hover {
-            background: #e0a800;
-        }
-        
-        .btn-danger {
-            background: #dc3545;
-            color: white;
-        }
-        
-        .btn-danger:hover {
-            background: #c82333;
-        }
-        
-        .btn-success {
-            background: #28a745;
-            color: white;
-        }
-        
-        .btn-success:hover {
-            background: #218838;
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #666;
-        }
-        
-        .empty-state h3 {
-            margin-bottom: 10px;
-            color: #333;
-        }
-        
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #666;
-        }
-        
+        .empty-state, .loading { text-align: center; padding: 60px 20px; color: #666; }
         .spinner {
             border: 3px solid #f3f3f3;
             border-top: 3px solid #667eea;
             border-radius: 50%;
-            width: 30px;
-            height: 30px;
+            width: 30px; height: 30px;
             animation: spin 1s linear infinite;
             margin: 0 auto 20px;
         }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         
         .threshold-input {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            margin-bottom: 10px;
+            width: 100%; box-sizing: border-box; padding: 8px;
+            border: 1px solid #ddd; border-radius: 4px; margin-bottom: 10px;
         }
         
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.5);
-        }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); }
+        .modal-content { background-color: white; margin: 15% auto; padding: 20px; border-radius: 8px; width: 80%; max-width: 400px; }
+        .modal-title { font-size: 1.2em; font-weight: bold; margin-bottom: 15px; }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
         
-        .modal-content {
-            background-color: white;
-            margin: 15% auto;
-            padding: 20px;
-            border-radius: 8px;
-            width: 80%;
-            max-width: 400px;
+        /* --- NOTIFICATION BANNER STYLES --- */
+        .notification {
+            position: fixed; top: 20px; right: 20px;
+            padding: 15px 25px; border-radius: 8px;
+            color: white; z-index: 1001;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            opacity: 0; transform: translateX(100%);
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            font-weight: 500;
         }
-        
-        .modal-title {
-            font-size: 1.2em;
-            font-weight: bold;
-            margin-bottom: 15px;
-        }
-        
-        .modal-actions {
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-            margin-top: 20px;
-        }
-        
-        .back-btn {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            background: #667eea;
-            color: white;
-            padding: 10px 20px;
-            border-radius: 5px;
-            text-decoration: none;
-            font-weight: bold;
-            z-index: 100;
-        }
-        
-        .back-btn:hover {
-            background: #5a6fd8;
+        .notification.show { opacity: 1; transform: translateX(0); }
+        .notification.success { background-color: #28a745; }
+        .notification.error { background-color: #dc3545; }
+
+        .btn-clear-alerts {
+            width: auto; 
+            padding: 8px 16px;
+            flex: 0 1 auto;
+            white-space: nowrap; 
         }
     </style>
 </head>
 <body>
-    <a href="index.html" class="back-btn">← Back to Tracker</a>
-    
     <div class="container">
         <div class="header">
             <h1>📊 Price Tracker Dashboard</h1>
@@ -317,35 +271,22 @@
             <div id="tabHome" class="tab active">🏠 Home</div>
             <div id="tabAlerts" class="tab">🔔 Alerts</div>
         </div>
+
         <div class="content">
             <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-number" id="totalProducts">-</div>
-                    <div class="stat-label">Total Products</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number" id="activeProducts">-</div>
-                    <div class="stat-label">Active Tracking</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number" id="priceAlerts">-</div>
-                    <div class="stat-label">Price Alerts</div>
-                </div>
+                <div class="stat-card"><div class="stat-number" id="totalProducts">-</div><div class="stat-label">Total Products</div></div>
+                <div class="stat-card"><div class="stat-number" id="activeProducts">-</div><div class="stat-label">Active Tracking</div></div>
+                <div class="stat-card"><div class="stat-number" id="priceAlerts">-</div><div class="stat-label">Price Alerts</div></div>
             </div>
             
-            <!-- Test API connectivity -->
             <div style="text-align: center; margin-bottom: 20px;">
-                <button class="btn btn-primary" id="testApiBtn" style="margin: 0 10px;">
-                    🔧 Test API Connection
-                </button>
-                <button class="btn btn-warning" id="refreshBtn" style="margin: 0 10px;">
-                    🔄 Refresh Products
-                </button>
+                <button class="btn btn-primary" id="refreshBtn">🔄 Refresh Products</button>
+                <button class="btn btn-warning" id="checkAlertsBtn">🔔 Check for Alerts Now</button>
             </div>
             
             <div class="products-section" id="homeSection">
-                <h2 class="section-title">📦 Your Tracked Products</h2>
-                <div id="productsContainer">
+                <div class="section-header"><h2 class="section-title">📦 Your Tracked Products</h2></div>
+                <div id="productsContainer" class="product-grid">
                     <div class="loading">
                         <div class="spinner"></div>
                         Loading your products...
@@ -354,13 +295,14 @@
             </div>
 
             <div class="products-section" id="alertsSection" style="display:none;">
-                <h2 class="section-title">🔔 Alerts</h2>
+                <div class="section-header">
+                    <h2 class="section-title">🔔 Alerts</h2>
+                    <button class="btn btn-danger btn-clear-alerts" id="clearAllAlertsBtn">🗑️ Clear All Alerts</button> </div>
                 <div id="alertsContainer" class="product-grid"></div>
             </div>
         </div>
     </div>
     
-    <!-- Modal for updating threshold -->
     <div id="thresholdModal" class="modal">
         <div class="modal-content">
             <div class="modal-title">Update Price Threshold</div>
@@ -372,7 +314,6 @@
         </div>
     </div>
     
-    <!-- Modal for confirmation -->
     <div id="confirmModal" class="modal">
         <div class="modal-content">
             <div class="modal-title" id="confirmTitle">Confirm Action</div>
@@ -384,9 +325,6 @@
         </div>
     </div>
 
-    <script src="lib/chart.js"></script>
-
     <script src="dashboard.js"></script>
-
 </body>
-</html> 
+</html>

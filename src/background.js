@@ -1,114 +1,121 @@
 /* global chrome */
 
-/**
- * @typedef {Object} TrackedProduct
- * @property {string} url
- * @property {number} threshold
- * @property {number} lastChecked
- */
-
-// Run check every hour
-const CHECK_INTERVAL = 60 * 60 * 1000;
-
-// Initialize tracked products from storage
-chrome.storage.local.get(['trackedProducts'], (result) => {
-  const trackedProducts = result.trackedProducts || {};
-  startPriceMonitoring(trackedProducts);
-});
-
-// Listen for messages to track a new product
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'TRACK_PRODUCT') {
-    const { url, threshold } = message.data;
-    addProductToTrack(url, threshold);
-    sendResponse({ success: true });
+// This listener is for when the user clicks the extension icon in the toolbar.
+chrome.action.onClicked.addListener((tab) => {
+  // Check if we are on a supported website
+  if (tab.url && (tab.url.includes("amazon.in/") || tab.url.includes("flipkart.com/"))) {
+    // If yes, send a message to our content script on that page, telling it to show the UI.
+    chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_UI" });
+  } else {
+    // If we are on any other website (like Google, etc.), open the dashboard in a new tab.
+    const dashboardUrl = chrome.runtime.getURL("src/dashboard.html");
+    chrome.tabs.create({ url: dashboardUrl });
   }
 });
 
-// Add new product and trigger first check
-async function addProductToTrack(url, threshold) {
-  const { trackedProducts = {} } = await chrome.storage.local.get(['trackedProducts']);
 
-  trackedProducts[url] = {
-    url,
-    threshold,
-    lastChecked: Date.now(),
-  };
+const ALARM_NAME = 'priceAlertChecker';
 
-  await chrome.storage.local.set({ trackedProducts });
-  checkPrice(url, threshold);
-}
-
-// Periodically monitor all tracked products
-function startPriceMonitoring(trackedProducts) {
-  // First-time check
-  Object.values(trackedProducts).forEach((product) => {
-    checkPrice(product.url, product.threshold);
+// 1. Create the alarm when the extension is installed
+chrome.runtime.onInstalled.addListener(() => {
+  console.log('Price Tracker extension installed. Setting up alarm...');
+  chrome.alarms.create(ALARM_NAME, {
+    delayInMinutes: 1,  // Run 1 minute after startup
+    periodInMinutes: 15 // Then repeat every 15 minutes
   });
+  console.log('Alarm created successfully.');
+});
 
-  // Then interval checks
-  setInterval(() => {
-    Object.values(trackedProducts).forEach((product) => {
-      checkPrice(product.url, product.threshold);
-    });
-  }, CHECK_INTERVAL);
-}
-
-// Fetch current price and notify if below threshold
-async function checkPrice(url, threshold) {
-  try {
-    const response = await fetch(`http://localhost:8000/api/price?url=${encodeURIComponent(url)}`);
-    const { price } = await response.json();
-
-    if (price <= threshold) {
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: '/icons/icon128.png',
-        title: 'Price Alert!',
-        message: `The price has dropped to $${price}! Click to view the product.`,
-      });
-
-      const { trackedProducts } = await chrome.storage.local.get(['trackedProducts']);
-      if (trackedProducts[url]) {
-        trackedProducts[url].lastChecked = Date.now();
-        await chrome.storage.local.set({ trackedProducts });
-      }
-    }
-  } catch (error) {
-    console.error('Error checking price:', error);
+// 2. Listen for the alarm and check for alerts
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === ALARM_NAME) {
+    console.log('Alarm triggered. Checking for new price alerts...');
+    checkAndNotify();
   }
-}
+});
 
-// Background script for Price Tracker Extension
+// 3. Listen for clicks on the notifications
+chrome.notifications.onClicked.addListener((notificationId) => {
+  chrome.tabs.create({ url: notificationId });
+  chrome.notifications.clear(notificationId);
+});
 
-console.log('Background script loaded');
-
-// Handle messages from content scripts and popup
+// 4. Listen for messages from other parts of the extension
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    console.log('Background received message:', request);
-    
     if (request.type === 'API_CALL') {
         handleApiCall(request, sendResponse);
-        return true; // Keep the message channel open for async response
+        return true; // Keep channel open for async response
     }
-    
-    // Handle other message types here
-    sendResponse({ success: true });
+    // New listener for manual check from dashboard
+    if (request.type === 'CHECK_ALERTS_NOW') {
+        console.log('Manual alert check triggered from dashboard.');
+        checkAndNotify();
+        sendResponse({ status: 'Alert check initiated.' });
+        return true;
+    }
 });
 
-// Handle API calls to the backend
+// Main function to check for alerts and create notifications
+async function checkAndNotify() {
+    try {
+        // Step A: Fetch ONLY new alerts from the backend
+        const response = await handleApiCall({ endpoint: '/api/alerts?new_only=true', method: 'GET' });
+        const newAlerts = response.data.alerts;
+
+        if (!newAlerts || newAlerts.length === 0) {
+            console.log('No new alerts found.');
+            return;
+        }
+
+        console.log(`Found ${newAlerts.length} new alerts. Creating notifications...`);
+        const notifiedAlertIds = [];
+
+        // Step B: Create a notification for each new alert
+        for (const alert of newAlerts) {
+            createNotification(alert);
+            notifiedAlertIds.push(alert._id);
+        }
+        
+        // Step C: Tell the backend to mark these alerts as notified
+        if (notifiedAlertIds.length > 0) {
+            await handleApiCall({
+                endpoint: '/api/alerts/mark-notified',
+                method: 'POST',
+                body: { alert_ids: notifiedAlertIds, user_id: 'default' }
+            });
+            console.log('Marked alerts as notified on the backend.');
+        }
+
+    } catch (error) {
+        console.error('Failed to check for alerts:', error);
+    }
+}
+
+// Helper to create a rich browser notification
+function createNotification(alert) {
+    const placeholderImage = 'src/icons/icon128.png';
+    chrome.notifications.create(alert.url, { // Use the product URL as the notification ID
+        type: 'image',
+        iconUrl: chrome.runtime.getURL('src/icons/icon128.png'),
+        title: 'Price Drop Alert!',
+        message: `The price of ${alert.name} dropped to ₹${alert.price}!`,
+        imageUrl: alert.image_url || chrome.runtime.getURL(placeholderImage),
+        contextMessage: 'Click to view the product page',
+        priority: 2
+    });
+}
+
+
+
 async function handleApiCall(request, sendResponse) {
     try {
         const { endpoint, method = 'GET', body = null } = request;
+        // All API calls go to our local server.
         const url = `http://localhost:8000${endpoint}`;
-        
-        console.log(`Making API call: ${method} ${url}`, body);
         
         const options = {
             method: method,
-            headers: {
-                'Content-Type': 'application/json',
-            }
+            headers: { 'Content-Type': 'application/json' }
         };
         
         if (body) {
@@ -119,38 +126,14 @@ async function handleApiCall(request, sendResponse) {
         
         if (!response.ok) {
             const errorText = await response.text();
-            console.error('API call failed:', response.status, errorText);
-            sendResponse({
-                error: `HTTP ${response.status}: ${errorText}`
-            });
-            return;
+            throw new Error(`HTTP Error ${response.status}: ${errorText}`);
         }
         
         const data = await response.json();
-        console.log('API call successful:', data);
-        
-        sendResponse({
-            data: data
-        });
+        sendResponse({ data: data });
         
     } catch (error) {
-        console.error('API call error:', error);
-        sendResponse({
-            error: error.message
-        });
+        console.error('API call error in background.js:', error);
+        sendResponse({ error: error.message });
     }
 }
-
-// Extension installation handler
-chrome.runtime.onInstalled.addListener(() => {
-    console.log('Price Tracker Extension installed');
-});
-
-// Extension startup handler
-chrome.runtime.onStartup.addListener(() => {
-    console.log('Price Tracker Extension started');
-});
-
-// Test the background script is working
-console.log('Background script initialization complete');
-

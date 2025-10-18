@@ -4,7 +4,6 @@
   "version": "1.0",
   "description": "Track and predict product prices using ML",
   "action": {
-    "default_popup": "src/index.html",
     "default_icon": {
     "16": "src/icons/icon.png",
     "48": "src/icons/icon.png",
@@ -17,11 +16,9 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.amazon.com/*",
-        "https://www.flipkart.com/*",
         "https://www.amazon.in/*"
          ],
-      "js": ["src/contentScript.js"],
+      "js": ["src/lib/chart.min.js", "src/contentScript.js"],
       "run_at": "document_end"
 
     }
@@ -31,7 +28,8 @@
     "tabs",
     "activeTab",
     "scripting",
-    "notifications"
+    "notifications",
+    "alarms"
   ],
   "host_permissions": [
     "http://localhost:8000/*",
@@ -39,7 +37,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["dashboard.html", "dashboard.js", "src/lib/*", "lib/*", "src/lib/chart.js", "src/lib/chart.min.js", "src/styles.css", "src/chart-data.js"],
+      "resources": ["src/dashboard.html", "src/dashboard.js", "src/lib/*", "src/lib/chart.js", "src/lib/chart.min.js", "src/styles.css", "src/chart-data.js"],
       "matches": ["<all_urls>"]
     }
   ],
