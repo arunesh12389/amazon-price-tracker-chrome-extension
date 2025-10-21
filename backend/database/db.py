@@ -11,14 +11,10 @@ load_dotenv()
 
 class Database:
     def __init__(self):
-        # Correct way to access environment variables in Python
-        MONGO_URI = os.getenv('MONGO_URI')
-        
+        MONGO_URI = os.getenv('MONGO_URI')        
         if not MONGO_URI:
-            raise ValueError("MONGODB_URI not found in environment variables")
-        
+            raise ValueError("MONGODB_URI not found in environment variables")       
         print(f"Connecting to MongoDB with URI: {MONGO_URI[:18]}...")  # Log first 20 chars for security
-        
         self.client = AsyncIOMotorClient(MONGO_URI)
         self.db = self.client["price_tracker"]
         
@@ -58,6 +54,20 @@ class Database:
     def _serialize_documents(self, docs):
         """Convert list of MongoDB documents to JSON-serializable format."""
         return [self._serialize_document(doc) for doc in docs]
+    
+    async def set_user_email(self, user_id: str, email: str) -> None:
+        """Saves or updates a user's email address."""
+        await self.users.update_one(
+            {'user_id': user_id},
+            {'$set': {'email': email, 'updated_at': datetime.utcnow()}},
+            upsert=True
+        )
+
+    # --- NEW FUNCTION TO GET EMAIL ---
+    async def get_user_email(self, user_id: str) -> Optional[str]:
+        """Retrieves a user's email address."""
+        user_data = await self.users.find_one({'user_id': user_id})
+        return user_data.get('email') if user_data else None
 
     async def add_tracked_product(self, url: str, name: str, threshold: float, current_price: float, image_url: Optional[str], user_id: str = "default") -> str:
 
@@ -121,6 +131,10 @@ class Database:
 
     async def add_alert(self, url: str, price: float, threshold: float, user_id: str = "default", name: Optional[str] = None, image_url: Optional[str] = None) -> None:
         """Record a price alert."""
+        if not image_url:
+            product = await self.products.find_one({'url': url, 'user_id': user_id})
+            if product:
+                image_url = product.get('image_url')
         alert = {
             'url': url,
             'price': price,
@@ -131,8 +145,9 @@ class Database:
             'timestamp': datetime.utcnow(),
             'notified': False
         }
-        
-        await self.alerts.insert_one(alert)
+        existing_alert = await self.alerts.find_one({'url': url, 'user_id': user_id, 'price': price})
+        if not existing_alert:
+            await self.alerts.insert_one(alert)
 
     async def mark_alert_notified(self, alert_id: str) -> None:
         """Mark an alert as notified."""
@@ -140,25 +155,19 @@ class Database:
             {'_id': ObjectId(alert_id)},
             {'$set': {'notified': True}}
         )
-
-    async def deactivate_product(self, url: str, user_id: str = "default") -> None:
+ 
+    async def deactivate_product(self, url: str, user_id: str = "default") -> bool:
         """Deactivate a product (stop tracking)."""
-        await self.products.update_one(
+        result = await self.products.update_one(
             {'url': url, 'user_id': user_id},
             {'$set': {'is_active': False}}
         )
+        return result.modified_count > 0
 
     async def get_user_tracked_products(self, user_id: str = "default") -> List[Dict]:
         """Get all tracked products for a specific user with current info."""
         cursor = self.products.find({'user_id': user_id, 'is_active': True})
-        products = await cursor.to_list(length=None)
-        
-        # Get latest price for each product
-        for product in products:
-            url = product.get('url')
-            if url:
-                latest_price = await self.get_latest_price(url, user_id)
-                product['current_price'] = latest_price
+        products = await cursor.to_list(length=None) 
                 
         return self._serialize_documents(products)
 
@@ -208,7 +217,12 @@ class Database:
         """Remove a single alert for a product & user."""
         result = await self.alerts.delete_one({'url': url, 'user_id': user_id})
         return result.deleted_count > 0
-
+    
+    async def remove_alerts_for_product(self, url: str, user_id: str = "default") -> int:
+        """Removes all alerts associated with a specific product for a user."""
+        result = await self.alerts.delete_many({'url': url, 'user_id': user_id})
+        print(f"Removed {result.deleted_count} alerts for product {url}")
+        return result.deleted_count
 
     async def get_user_alerts(self, user_id: str = "default", only_new: bool = False) -> List[Dict]:
         """Get alerts for a user sorted by newest first."""
@@ -218,7 +232,6 @@ class Database:
         cursor = self.alerts.find(query).sort('timestamp', -1)
         alerts = await cursor.to_list(length=None)
         return self._serialize_documents(alerts)
-
 
     async def mark_alerts_notified(self, alert_ids: List[str], user_id: str = "default") -> int:
             """Marks a list of alerts as notified for a user."""
@@ -232,7 +245,6 @@ class Database:
                 {'$set': {'notified': True}}
             )
             return result.modified_count
-
 
     async def remove_all_alerts_for_user(self, user_id: str = "default") -> int:
         """Remove all alerts for a specific user."""

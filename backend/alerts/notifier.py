@@ -1,107 +1,91 @@
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from typing import List, Dict
 import os
+import sib_api_v3_sdk
+from sib_api_v3_sdk.rest import ApiException
+from typing import Dict
 from dotenv import load_dotenv
-from twilio.rest import Client
 
 load_dotenv()
 
 class Notifier:
     def __init__(self):
-        # Email configuration
-        self.smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
-        self.smtp_port = int(os.getenv('SMTP_PORT', '587'))
-        self.smtp_username = os.getenv('SMTP_USERNAME')
-        self.smtp_password = os.getenv('SMTP_PASSWORD')
+        self.brevo_api_key = os.getenv('BREVO_API_KEY')
+        self.from_email = os.getenv('BREVO_FROM_EMAIL')
         
-        # Twilio configuration
-        self.twilio_account_sid = os.getenv('TWILIO_ACCOUNT_SID')
-        self.twilio_auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-        self.twilio_from_number = os.getenv('TWILIO_FROM_NUMBER')
-        
-        if self.twilio_account_sid and self.twilio_auth_token:
-            self.twilio_client = Client(self.twilio_account_sid, self.twilio_auth_token)
+        if self.brevo_api_key and self.from_email:
+            # Configure Brevo API
+            self.configuration = sib_api_v3_sdk.Configuration()
+            self.configuration.api_key['api-key'] = self.brevo_api_key
+            
+            # Create an instance of the API class
+            api_client = sib_api_v3_sdk.ApiClient(self.configuration)
+            self.brevo_api_instance = sib_api_v3_sdk.TransactionalEmailsApi(api_client)
+            print("✅ Brevo Notifier configured successfully.")
         else:
-            self.twilio_client = None
+            self.brevo_api_instance = None
+            print("⚠️ Brevo API Key or From Email not found. Email notifications will be disabled.")
 
-    async def send_email_alert(self, to_email: str, product_name: str, 
-                             current_price: float, threshold: float, url: str) -> bool:
-        """Send price alert via email."""
+    async def send_email_alert(
+        self, 
+        to_email: str, 
+        product_name: str, 
+        current_price: float, 
+        threshold: float, 
+        url: str
+    ) -> bool:
+        """Send a price alert email using the Brevo (Sendinblue) API."""
+        if not self.brevo_api_instance:
+            print("Cannot send email: Brevo client is not configured.")
+            return False
+
+        # Use Indian Rupee symbol and formatting
+        formatted_price = f"₹{current_price:,.2f}"
+        formatted_threshold = f"₹{threshold:,.2f}"
+
+        # If product_name is None or empty, use a more descriptive default.
+        display_name = product_name if product_name and product_name.strip() else "A Tracked Product"
+        subject = f'Price Alert: {display_name} is now {formatted_price}!'
+
+        # Create the HTML content for a nicer-looking email
+        html_content = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6;">
+            <h2>Price Drop Alert! 📉</h2>
+            <p>Hello!</p>
+            <p>Great news! The price for <strong>{product_name}</strong> has dropped to a new low.</p>
+            <table style="width: 100%; max-width: 400px; border-collapse: collapse; margin: 20px 0;">
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #ddd; background-color: #f9f9f9;">Current Price</td>
+                    <td style="padding: 10px; border: 1px solid #ddd; font-weight: bold; font-size: 1.2em; color: #28a745;">{formatted_price}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #ddd; background-color: #f9f9f9;">Your Threshold</td>
+                    <td style="padding: 10px; border: 1px solid #ddd;">{formatted_threshold}</td>
+                </tr>
+            </table>
+            <a href="{url}" style="display: inline-block; padding: 12px 20px; background-color: #667eea; color: white; text-decoration: none; border-radius: 5px;">
+                View Product Now
+            </a>
+            <p style="margin-top: 30px; font-size: 0.9em; color: #888;">Happy shopping!<br>- The Smart Price Tracker</p>
+        </body>
+        </html>
+        """
+
+        # Define the email payload
+        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+            to=[{"email": to_email}],
+            sender={"email": self.from_email, "name": "Smart Price Tracker"},
+            subject=f'Price Alert: {product_name} is now {formatted_price}!',
+            html_content=html_content
+        )
+
         try:
-            msg = MIMEMultipart()
-            msg['From'] = self.smtp_username
-            msg['To'] = to_email
-            msg['Subject'] = f'Price Alert: {product_name}'
-
-            body = f"""Hello!
-
-Great news! The price of {product_name} has dropped below your alert threshold.
-
-Current Price: ${current_price:.2f}
-Your Alert Threshold: ${threshold:.2f}
-
-View the product here: {url}
-
-Best regards,
-Smart Price Tracker"""
-
-            msg.attach(MIMEText(body, 'plain'))
-
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                server.starttls()
-                server.login(self.smtp_username, self.smtp_password)
-                server.send_message(msg)
-
+            # Send the email
+            api_response = self.brevo_api_instance.send_transac_email(send_smtp_email)
+            print(f"Successfully sent email to {to_email}. Brevo response: {api_response}")
             return True
-
+        except ApiException as e:
+            print(f"An error occurred while sending email via Brevo: {e}")
+            return False
         except Exception as e:
-            print(f"Error sending email alert: {str(e)}")
+            print(f"An unexpected error occurred: {e}")
             return False
-
-    async def send_sms_alert(self, to_number: str, product_name: str, 
-                            current_price: float, threshold: float) -> bool:
-        """Send price alert via SMS using Twilio."""
-        if not self.twilio_client:
-            return False
-
-        try:
-            message = f"Price Alert: {product_name} is now ${current_price:.2f} (below your threshold of ${threshold:.2f})"
-
-            self.twilio_client.messages.create(
-                body=message,
-                from_=self.twilio_from_number,
-                to=to_number
-            )
-
-            return True
-
-        except Exception as e:
-            print(f"Error sending SMS alert: {str(e)}")
-            return False
-
-    async def send_alert(self, alert_data: Dict) -> bool:
-        """Send alert through all configured channels."""
-        success = False
-
-        if 'email' in alert_data:
-            email_success = await self.send_email_alert(
-                alert_data['email'],
-                alert_data['product_name'],
-                alert_data['current_price'],
-                alert_data['threshold'],
-                alert_data['url']
-            )
-            success = success or email_success
-
-        if 'phone' in alert_data:
-            sms_success = await self.send_sms_alert(
-                alert_data['phone'],
-                alert_data['product_name'],
-                alert_data['current_price'],
-                alert_data['threshold']
-            )
-            success = success or sms_success
-
-        return success

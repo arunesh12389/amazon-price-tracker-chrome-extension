@@ -107,6 +107,24 @@ function createNotification(alert) {
 
 
 
+async function fetchApi(endpoint, method = 'GET', body = null) {
+    const url = `${BACKEND_URL}${endpoint}`;
+    const options = {
+        method: method,
+        headers: { 'Content-Type': 'application/json' }
+    };
+    if (body) {
+        options.body = JSON.stringify(body);
+    }
+    const response = await fetch(url, options);
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP Error ${response.status}: ${errorText}`);
+    }
+    return await response.json();
+}
+
+
 async function handleApiCall(request, sendResponse) {
     try {
         const { endpoint, method = 'GET', body = null } = request;

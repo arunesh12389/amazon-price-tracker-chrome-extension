@@ -1,10 +1,12 @@
+import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 import uvicorn
 
+from groq import Groq 
 from scraper.amazon_scraper import AmazonScraper
 from predictor.predict import PricePredictor
 from database.db import Database
@@ -12,6 +14,21 @@ from alerts.notifier import Notifier
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import asyncio
 from contextlib import asynccontextmanager
+
+try:
+    GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+    if GROQ_API_KEY:
+        groq_client = Groq(api_key=GROQ_API_KEY)
+        print("✅ Groq AI configured successfully.")
+    else:
+        groq_client = None
+        print("⚠️ GROQ_API_KEY not found. AI features will be disabled.")
+except Exception as e:
+    groq_client = None
+    print(f"❌ Error configuring Groq AI: {e}")
+
+
+
 
 scheduler = AsyncIOScheduler()
 
@@ -99,10 +116,6 @@ class AddPricePointRequest(BaseModel):
     user_id: str = "default"
     timestamp: Optional[str] = None
 
-class UserEmailRequest(BaseModel):
-    user_id: str = "default"
-    email: str
-
 class AlertActionRequest(BaseModel):
     url: str
     user_id: str = "default"
@@ -114,6 +127,9 @@ class MarkAlertsNotifiedRequest(BaseModel):
     alert_ids: List[str]
     user_id: str = "default"
 
+class UserEmailRequest(BaseModel): # New model for email
+    email: EmailStr
+    user_id: str = "default"
 
 @app.get("/")
 def root():
@@ -338,21 +354,16 @@ async def stop_tracking_product(request: ProductActionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/product/remove")
-async def remove_product_completely(request: ProductActionRequest):
-    """Completely remove a product and all its data."""
+async def remove_product(request: ProductActionRequest):
+    """Deactivates a product AND removes its associated alerts."""
     try:
-        success = await db.remove_product_completely(request.url, request.user_id)
-        
-        if success:
-            return {
-                "status": "success",
-                "message": "Product and all data removed successfully"
-            }
+        deactivated = await db.deactivate_product(request.url, request.user_id)
+        if deactivated:
+            # Also remove any existing alerts for this product to prevent ghost notifications
+            await db.remove_alerts_for_product(request.url, request.user_id)
+            return {"status": "success", "message": "Product tracking stopped and alerts cleared."}
         else:
-            raise HTTPException(status_code=404, detail="Product not found")
-            
-    except HTTPException as e:
-        raise e
+            raise HTTPException(status_code=404, detail="Product not found.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -497,16 +508,15 @@ async def scheduled_price_update():
                             try:
                                 user_email = await db_instance.get_user_email(user_id)
                                 if user_email:
+                                    print(f"[Scheduler] Sending email alert to {user_email}...")
                                     await notifier.send_email_alert(
                                         to_email=user_email,
-                                        product_name=product.get('name', 'Product'),
-                                        current_price=price,
-                                        threshold=threshold,
-                                        url=url
+                                        product_name=product.get('name', 'Your Tracked Product'),
+                                        current_price=price, threshold=threshold, url=url
                                     )
                             except Exception as notify_err:
                                 print(f"[Scheduler] Email notify failed: {notify_err}")
-                            print(f"[Scheduler] 🚨 Price alert for {url}: ₹{price} <= ₹{threshold}")
+                            print(f"[Scheduler] 🚨 Price alert for {product.get('name')} {url}: ₹{price} <= ₹{threshold}")
                         
                         print(f"[Scheduler] Updated price for {url}: ₹{price}")
                     
@@ -515,7 +525,6 @@ async def scheduled_price_update():
                     
     except Exception as e:
         print(f"[Scheduler] General error: {e}")
-
 
 @app.get("/api/test-scheduler")
 async def test_scheduler_manually():
@@ -527,6 +536,54 @@ async def test_scheduler_manually():
     except Exception as e:
         print(f"❌ Scheduler test failed: {e}")
         return {"status": "error", "message": str(e)}
+
+# --- NEW AI ADVISOR ENDPOINT ---
+@app.post("/api/product/advice")
+async def get_product_advice(request: ProductActionRequest):
+    if not groq_client:
+        raise HTTPException(status_code=503, detail="AI service is not configured.")
+
+    try:
+        # 1. Gather Data
+        history_raw = await db.get_price_history(request.url, request.user_id)
+        
+        if len(history_raw) < predictor.MIN_HISTORY:
+            raise HTTPException(status_code=400, detail=f"Insufficient price history for prediction. Need at least {predictor.MIN_HISTORY} data points.")
+        # Use your existing predictor functions
+        insights = predictor.get_price_insights(history_raw)
+        prediction = predictor.predict_prices(history_raw)
+
+        # 2. Construct the Prompt for the AI
+        prompt = f"""
+        You are an expert e-commerce price analyst. A user wants to buy a product. Based on the data below, give a concise, one-paragraph recommendation on whether they should "Buy Now" or "Wait". Justify your answer.
+
+        - Product Name: '{insights.get("name", "this product")}'
+        - Current Price: ₹{insights['current_price']:.2f}
+        - Historical Low Price: ₹{insights['lowest_price']:.2f}
+        - Historical High Price: ₹{insights['highest_price']:.2f}
+        - Our ML model's recommendation: '{prediction['recommendation']}' with {prediction['confidence']*100:.0f}% confidence.
+        - Our model predicts the price will move towards ₹{min(prediction['prices']):.2f} in the next 7 days.
+
+        Start your response with a clear "Recommendation: Buy Now." or "Recommendation: Wait.".
+        """
+
+# 3. Call the Groq AI
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model="llama-3.3-70b-versatile", 
+        )
+        
+        return {"advice": chat_completion.choices[0].message.content}
+
+    except Exception as e:
+        print(f"Error in AI advice endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

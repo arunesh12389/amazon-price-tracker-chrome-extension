@@ -7,6 +7,9 @@ import numpy as np
 import math
 
 class PricePredictor:
+
+    MIN_HISTORY = 5
+    
     def prepare_data(self, history: List[Dict]) -> pd.DataFrame:
         """Convert price history to Prophet-compatible DataFrame."""
         df = pd.DataFrame(history)

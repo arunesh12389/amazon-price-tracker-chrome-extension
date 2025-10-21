@@ -256,6 +256,15 @@ const injectStyles = () => {
        background-color: #f9f9f9;
        border-radius: 4px;
      }
+
+    .ai-advice-button { 
+      background-color: #764ba2; 
+      color: white; 
+      border-color: #663a99; 
+    }
+    .ai-advice-button:hover:not(:disabled) {
+     background-color: #5d3187; 
+     }
   `;
   document.head.appendChild(style);
 };
@@ -287,21 +296,6 @@ const extractAmazonProduct = () => {
   }
 };
 
-// const extractFlipkartProduct = () => {
-//   try {
-//     const name = document.querySelector('h1 span')?.textContent?.trim();
-//     const priceText = document.querySelector('._30jeq3._16Jk6d')?.textContent;
-//     const price = priceText ?
-//       parseFloat(priceText.replace(/[^0-9.]/g, '')) :
-//       0;
-//     const image = document.querySelector('img._396cs4')?.getAttribute('src');
-//     if (!name || !price) return null;
-//     return { name, currentPrice: price, url: window.location.href, image };
-//   } catch (error) {
-//     console.error('Error extracting Flipkart product info:', error);
-//     return null;
-//   }
-// };
 
 const extractProductInfo = () => {
   const hostname = window.location.hostname;
@@ -426,6 +420,7 @@ const injectPriceHistoryUI = async () => {
       <button class="price-tracker-button" id="pt-chart-toggle">📈 Show Price Chart</button>
       <button class="price-tracker-button track-button" id="pt-track-btn">🎯 Track This Product</button>
       <button class="price-tracker-button price-alert-button" id="pt-alert-btn">🔔 Set Price Alert</button>
+      <button class="price-tracker-button ai-advice-button" id="pt-ai-advice-btn">🤖 Get AI Advice</button>
       <a href="${chrome.runtime.getURL('src/dashboard.html')}" target="_blank" class="price-tracker-button dashboard-button">📊 View Dashboard</a>
     </div>
   `;
@@ -485,14 +480,27 @@ const injectPriceHistoryUI = async () => {
     const suggestedThreshold = (currentPrice * 0.9).toFixed(2);
     const modal = document.createElement('div');
     modal.className = 'price-tracker-modal';
+    // Fetch the user's current email to pre-fill the input
+    let userEmail = '';
+    try {
+        const emailData = makeApiCall('/api/user/email?user_id=default', 'GET');
+        userEmail = emailData.email || '';
+    } catch(e) {
+        console.warn("Could not fetch user's email for modal.");
+    }
     modal.innerHTML = `
-      <div class="price-tracker-modal-content">
+<div class="price-tracker-modal-content">
         <div class="price-tracker-modal-header"><h3>Set Price Alert</h3><button class="price-tracker-modal-close">&times;</button></div>
         <div class="price-tracker-modal-body">
           <p>Current price: <b>₹${currentPrice}</b></p>
           <div class="price-tracker-form-group">
             <label for="price-threshold">Alert me when price drops below:</label>
-            <input type="number" id="price-threshold" value="${suggestedThreshold}" min="1" max="${currentPrice}" step="1">
+            <input type="number" id="price-threshold" value="${suggestedThreshold}" style="width:100%;padding:8px;box-sizing:border-box;">
+          </div>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <div class="price-tracker-form-group">
+            <label for="alert-email">Send email notifications to:</label>
+            <input type="email" id="alert-email" value="${userEmail}" placeholder="your.email@example.com" style="width:100%;padding:8px;box-sizing:border-box;">
           </div>
         </div>
         <div class="price-tracker-modal-footer">
@@ -510,6 +518,7 @@ const injectPriceHistoryUI = async () => {
     modal.querySelector('#confirm-alert-btn').addEventListener('click', async (e) => {
       const setAlertBtn = e.currentTarget;
       const threshold = parseFloat(modal.querySelector('#price-threshold').value);
+      const email = modal.querySelector('#alert-email').value.trim();
       if (isNaN(threshold) || threshold <= 0) {
         alert('Please enter a valid price threshold');
         return;
@@ -518,6 +527,10 @@ const injectPriceHistoryUI = async () => {
       setAlertBtn.innerHTML = '<div class="spinner-small"></div> Setting...';
       try {
         await trackProduct(productInfo, threshold);
+        // If an email was entered, save it
+        if (email) {
+          await makeApiCall('/api/user/email', 'POST', { email: email, user_id: 'default' });
+        }
         closeModal();
         const alertButtonOnPage = container.querySelector('#pt-alert-btn');
         alertButtonOnPage.innerHTML = '✅ Alert Set';
@@ -530,6 +543,40 @@ const injectPriceHistoryUI = async () => {
       }
     });
   });
+
+  // NEW LISTENER FOR AI ADVICE BUTTON
+    container.querySelector('#pt-ai-advice-btn').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.innerHTML = '🤖 Thinking...';
+  
+      const modal = document.createElement('div');
+      modal.className = 'price-tracker-modal';
+      modal.innerHTML = `
+        <div class="price-tracker-modal-content">
+          <div class="price-tracker-modal-header"><h3>🧠 AI Buying Advice</h3><button class="price-tracker-modal-close">&times;</button></div>
+          <div class="price-tracker-modal-body" style="text-align: center;">
+              <div class="spinner"></div>
+              <p>Analyzing price trends...</p>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      const closeModal = () => document.body.removeChild(modal);
+      modal.querySelector('.price-tracker-modal-close').addEventListener('click', closeModal);
+  
+      try {
+          const response = await makeApiCall('/api/product/advice', 'POST', { url: productInfo.url });
+          const adviceText = response.advice.replace(/\n/g, '<br>'); // Format newlines for HTML
+          modal.querySelector('.price-tracker-modal-body').innerHTML = `<p style="text-align: left; line-height: 1.6;">${adviceText}</p>`;
+      } catch (error) {
+          modal.querySelector('.price-tracker-modal-body').innerHTML = `<p style="color: red;">Error: Could not get AI advice. ${error.message}</p>`;
+      } finally { 
+          btn.disabled = false;
+          btn.innerHTML = '🤖 Get AI Advice';
+      }
+    });
+
 };
 
 injectStyles();

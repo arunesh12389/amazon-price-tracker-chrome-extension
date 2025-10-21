@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setupEventListeners();
     loadUserProducts();
     loadAlerts();
+    loadUserSettings();
 });
 
 // Setup all event listeners for the page
@@ -22,30 +23,38 @@ function setupEventListeners() {
     document.getElementById('newThreshold').addEventListener('keypress', (event) => { if (event.key === 'Enter') updateThreshold(); });
     document.getElementById('tabHome').addEventListener('click', () => switchTab('home'));
     document.getElementById('tabAlerts').addEventListener('click', () => switchTab('alerts'));
+    document.getElementById('tabSettings').addEventListener('click', () => switchTab('settings'));
     document.getElementById('checkAlertsBtn').addEventListener('click', () => {
         chrome.runtime.sendMessage({ type: 'CHECK_ALERTS_NOW' }, (response) => {
             showSuccess(response.status);
         });
     });
-}
+    document.getElementById('saveEmailBtn').addEventListener('click', saveEmail);
+};
 
 function switchTab(tabName) {
-    const tabHome = document.getElementById('tabHome');
-    const tabAlerts = document.getElementById('tabAlerts');
-    const homeSection = document.getElementById('homeSection');
-    const alertsSection = document.getElementById('alertsSection');
+    // Hide all main sections
+    document.getElementById('homeSection').style.display = 'none';
+    document.getElementById('alertsSection').style.display = 'none';
+    document.getElementById('settingsSection').style.display = 'none';
 
+    // Deactivate all tabs
+    document.getElementById('tabHome').classList.remove('active');
+    document.getElementById('tabAlerts').classList.remove('active');
+    document.getElementById('tabSettings').classList.remove('active');
+
+    // Activate the selected tab and show the corresponding section
     if (tabName === 'home') {
-        tabHome.classList.add('active');
-        tabAlerts.classList.remove('active');
-        homeSection.style.display = 'block';
-        alertsSection.style.display = 'none';
-    } else {
-        tabAlerts.classList.add('active');
-        tabHome.classList.remove('active');
-        homeSection.style.display = 'none';
-        alertsSection.style.display = 'block';
+        document.getElementById('tabHome').classList.add('active');
+        document.getElementById('homeSection').style.display = 'block';
+    } else if (tabName === 'alerts') {
+        document.getElementById('tabAlerts').classList.add('active');
+        document.getElementById('alertsSection').style.display = 'block';
         loadAlerts();
+    } else if (tabName === 'settings') {
+        document.getElementById('tabSettings').classList.add('active');
+        document.getElementById('settingsSection').style.display = 'block';
+        loadUserSettings();
     }
 }
 
@@ -246,4 +255,37 @@ function showNotification(message, type = 'success') {
         notification.classList.remove('show');
         setTimeout(() => notification.remove(), 300); 
     }, 3000);
+}
+
+async function loadUserSettings() {
+    try {
+        const data = await makeApiCall('/api/user/email?user_id=default', 'GET');
+        const email = data.email;
+        const currentEmailSpan = document.getElementById('currentEmail');
+        if (email) {
+            currentEmailSpan.textContent = email;
+            document.getElementById('emailInput').value = email;
+        } else {
+            currentEmailSpan.textContent = 'Not set';
+        }
+    } catch (error) {
+        showError('Could not load user settings.');
+    }
+}
+
+async function saveEmail(emailToSave) {
+    const email = typeof emailToSave === 'string' ? emailToSave : document.getElementById('emailInput').value.trim();
+    if (!email) {
+        return showError('Please enter a valid email address.');
+    }
+
+    try {
+        const response = await makeApiCall('/api/user/email', 'POST', { email: email, user_id: 'default' });
+        showSuccess(response.message || "Email saved!");
+        loadUserSettings(); // Refresh the displayed email
+        return true; 
+    } catch (error) {
+        showError('Failed to save email: ' + error.message);
+        return false;
+    }
 }

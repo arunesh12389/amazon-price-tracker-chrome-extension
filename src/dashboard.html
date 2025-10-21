@@ -270,6 +270,7 @@
         <div class="tabs">
             <div id="tabHome" class="tab active">🏠 Home</div>
             <div id="tabAlerts" class="tab">🔔 Alerts</div>
+            <div id="tabSettings" class="tab">⚙️ Settings</div>
         </div>
 
         <div class="content">
@@ -299,6 +300,16 @@
                     <h2 class="section-title">🔔 Alerts</h2>
                     <button class="btn btn-danger btn-clear-alerts" id="clearAllAlertsBtn">🗑️ Clear All Alerts</button> </div>
                 <div id="alertsContainer" class="product-grid"></div>
+            </div>
+
+            <div id="settingsSection" class="settings-section" style="display:none;">
+                <div class="section-header"><h2 class="section-title">⚙️ Notification Settings</h2></div>
+                <p>Set your email address to receive price drop notifications directly in your inbox.</p>
+                <div class="email-form">
+                    <input type="email" id="emailInput" class="email-input" placeholder="Enter your email address">
+                    <button class="btn btn-primary" id="saveEmailBtn">Save Email</button>
+                </div>
+                <p style="margin-top: 15px;">Current Email: <span id="currentEmail" class="current-email">Not set</span></p>
             </div>
         </div>
     </div>
