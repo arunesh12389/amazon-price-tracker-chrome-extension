@@ -50,3 +50,10 @@ BREVO_FROM_EMAIL= YOUR EMAIL
 
 # Example of local development command (for reference)
 # python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+## Screenshots:
+<img width="1219" height="929" alt="image" src="https://github.com/user-attachments/assets/8d832785-79ee-4ce0-a558-ec1f13977362" />
+<img width="1157" height="870" alt="image" src="https://github.com/user-attachments/assets/ca992bb2-bf06-4579-861b-c10922645542" />
+
+
+
